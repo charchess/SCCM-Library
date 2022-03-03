@@ -514,17 +514,20 @@ Class IPrange : System.IComparable
         }
         $this.size=$this.IPEndID.IPID - $this.IPStartID.IPID
     }
-    [IPRAnge] Merge([IPRange] $extension)
+    [bool] Merge([IPRange] $extension)
     { 
+        $isMerged=$false
         if(($extension.IPStart.IPID -le ($this.IPEnd.IPID + 1)) -and ($extension.IPEnd.IPID -gt $this.IPEnd.IPID))
         {
             $this.IPEnd = $extension.IPEnd
+            $isMerged=$true
         }
         if(($extension.IPEnd.IPID -ge ($this.IPStart.IPID - 1)) -and ($extension.IPStart.IPID -lt $this.IPStart.IPID))
         {
             $this.IPStart = $extension.IPStart
+            $isMerged=$true
         }
-        return $this
+        return $isMerged
     }
     [int] CompareTo($val)
     {
@@ -581,28 +584,60 @@ Class IPrange : System.IComparable
             throw("$a and $b have no common subnet to build merge on ")
         }
     }
-    static [IPRange] op_Substraction([IPRange] $a, [IPRange] $b) 
-    { 
-        $return=[IPRange] "$($b)" 
-        $isExtended=$false
-        if(($a.IPStart.IPID -le ($b.IPEnd.IPID + 1)) -and ($a.IPEnd.IPID -gt $b.IPEnd.IPID))
+}
+
+Class IPRanges : System.IComparable
+{
+    $Ranges = [System.Collections.Generic.List[IPRange]]::new()
+
+    IPRanges ()
+    {
+    }
+
+    IPRanges ([IPRange] $IPRange)
+    {
+        $this.Ranges.AddRange($IPRange)
+    }
+
+    AddRange ([IPRange] $IPRange)
+    {
+        $this.Ranges.add($IPRange)
+        $this.FullMergeRanges()
+        # TBD: optimiser en faisant un merge selectif/recursif
+    }
+    RemoveRange ([IPRange] $IPRange)
+    {
+        # TBD
+    }
+    SplitRange ([int] $val)
+    {
+        # TBD
+    }
+    FullMergeRanges()
+    {
+        for($j = 0; $j -lt ($this.Ranges).Count; $j++)
         {
-            $b.IPEnd = $a.IPEnd
-            $isExtended=$true
-        }
-        if(($a.IPEnd.IPID -ge ($b.IPStart.IPID - 1)) -and ($a.IPStart.IPID -lt $b.IPStart.IPID))
-        {
-            $b.IPStart = $a.IPStart
-            $isExtended=$true
-        }
-        if($isExtended)
-        {
-            return $b
-        } else {
-            throw("$a and $b have no common subnet to build merge")
+            for($i = 0; $i -lt ($this.Ranges).Count; $i++)
+            {
+                if($this.Ranges[$i].Merge($this.Ranges[$j]))
+                {
+                    $this.Ranges.removeat($j)
+                }
+            }
         }
     }
+    [int] CompareTo($val)
+    {
+        return 0
+    }
+    Debug()
+    {
+        $this.Ranges
+        $this.Ranges.Count
+        $this.Ranges.Length
+    }
 }
+
 
 function backup-boundaries
 {
@@ -732,19 +767,19 @@ function import-csv2boundaries
                         # vérifier que la range existante est cohérente (nom de la range)
                         # vérifier que le supernet ne couvre pas d'autres range incompatible
                         # galère
-                        replace-IPRangeBoundary -IPRangeSource $o.IPRange -IPRangeTarget ($IPRange.Merge($o.IPRange)) -BoundaryName "$BoundaryName" 
+                        replace-IPRangeBoundary -IPRangeSource $o.IPRange -IPRangeTarget ($IPRange + $o.IPRange) -BoundaryName "$BoundaryName" 
                     }
                     "OVERLAP" 
                     { 
                         # vérifier la cohérence de l'overlap avant de l'etendre 
                         # nom de la boundary, pas d'autre boundary exotique incluse
-                        replace-IPRangeBoundary -IPRangeSource $o.IPRange -IPRangeTarget ($IPRange.Merge($o.IPRange)) -BoundaryName "$BoundaryName" 
+                        replace-IPRangeBoundary -IPRangeSource $o.IPRange -IPRangeTarget ($IPRange + $o.IPRange) -BoundaryName "$BoundaryName" 
                     }
                     "EXTENDING" 
                     {
                         # vérifier la cohérence de l'overlap avant de l'etendre 
                         # nom de la boundary, pas d'autre boundary exotique écrasée
-                        replace-IPRangeBoundary -IPRangeSource $o.IPRange -IPRangeTarget ($IPRange.Merge($o.IPRange)) -BoundaryName "$BoundaryName"  
+                        replace-IPRangeBoundary -IPRangeSource $o.IPRange -IPRangeTarget ($IPRange + $o.IPRange) -BoundaryName "$BoundaryName"  
                     }
                     "PERFECT_MATCH" 
                     { 
