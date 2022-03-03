@@ -636,16 +636,18 @@ function replace-IPRangeBoundary
     )
     # nom de la boundary, pas d'autre boundary exotique écrasée
     $overlaps=check-overlaping -IPBoundary ($IPRangeTarget)
-    $exoticBoundaryName=0
+    $exoticBoundaryNameCount=0
+    $exoticBoundaryName=""
     foreach($o in $overlaps)
     {
         if($o.BoundaryName -notmatch $BoundaryName)
         {
-            $exoticBoundaryName++
+            $exoticBoundaryNameCount++
+            $exoticBoundaryName+="$($o.BoundaryName) "
         }
     }
     # TBD: etre plus explicite sur les actions (couvertures de range deja existentes....)
-    if(($exoticBoundaryName -eq 0) -or $force)
+    if(($exoticBoundaryNameCount -eq 0) -or $force)
     {
         if(-not($DisplayOnlyError))
         {
@@ -663,8 +665,8 @@ function replace-IPRangeBoundary
     }
     else
     {
-        # throw("some boundaries ($exoticBoundaryName) not matching $BoundaryName are present in the range $IPRangeTarget")
-        write-host "some boundaries ($exoticBoundaryName) not matching $BoundaryName are present in the range $IPRangeTarget"
+        # throw("some boundaries ($exoticBoundaryNameCount) not matching $BoundaryName are present in the range $IPRangeTarget")
+        write-host "some boundaries ($exoticBoundaryNameCount : $exoticBoundaryName) not matching $BoundaryName are present in the range $IPRangeTarget"
         # TBD: add a check if range is fully covered by those boundaries
     }
 }
