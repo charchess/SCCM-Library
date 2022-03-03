@@ -631,7 +631,8 @@ function replace-IPRangeBoundary
         [Parameter(Mandatory=$true)][string] $IPRangeSource,
         [Parameter(Mandatory=$true)][string] $IPRangeTarget,
         [Parameter(Mandatory=$true)][string] $BoundaryName,
-        [Parameter(Mandatory=$false)][switch] $force
+        [Parameter(Mandatory=$false)][switch] $force,
+        [Parameter(Mandatory=$false)][switch] $DisplayOnlyError
     )
     # nom de la boundary, pas d'autre boundary exotique écrasée
     $overlaps=check-overlaping -IPBoundary ($IPRangeTarget)
@@ -646,14 +647,25 @@ function replace-IPRangeBoundary
     # TBD: etre plus explicite sur les actions (couvertures de range deja existentes....)
     if(($exoticBoundaryName -eq 0) -or $force)
     {
-        write-host "trying to replace $IPRangeSource with $IPRangeTarget for $BoundaryName"
+        if(-not($DisplayOnlyError))
+        {
+            write-host "trying to replace $IPRangeSource with $IPRangeTarget for $BoundaryName"
+        }
         $CMBoundary=Get-CMBoundary | where-object {($_.Value -match $IPRangeSource) -and ($_.DisplayName -match $BoundaryName)}
-        $CMBoundary | Set-CMBoundary -NewValue $IPRangeTarget
+        if(Get-CMBoundary | where-object {($_.Value -match $IPRangeTarget) -and ($_.DisplayName -match $BoundaryName)})
+        {  
+            write-host "Target range $IPRangeTarget already exist, can't extend $IPRangeSource - $BoundaryName"
+        }
+        else
+        {
+            $CMBoundary | Set-CMBoundary -NewValue $IPRangeTarget
+        }
     }
     else
     {
         # throw("some boundaries ($exoticBoundaryName) not matching $BoundaryName are present in the range $IPRangeTarget")
         write-host "some boundaries ($exoticBoundaryName) not matching $BoundaryName are present in the range $IPRangeTarget"
+        # TBD: add a check if range is fully covered by those boundaries
     }
 }
 
@@ -664,7 +676,8 @@ function import-csv2boundaries
 
     param(
         [parameter(Mandatory=$false)][string] $filePath="$env:USERPROFILE\Documents\export_subnets.csv",
-        [parameter(Mandatory=$false)][string] $filter
+        [parameter(Mandatory=$false)][string] $filter,
+        [parameter(Mandatory=$false)][switch] $DisplayOnlyError
     )
     Write-Progress -Activity "importing $filepath"
     $ADSubnets=Import-Csv -Path $filepath -Delimiter "`t" | Where-Object {$_.Site -match "$filter"}
@@ -688,7 +701,10 @@ function import-csv2boundaries
         $overlap=check-overlaping -IPBoundary ($IPRange.ToString())
         if(-not($overlap))
         {
-            write-verbose "NONE: creating range $IPRange on $BoundaryName" 
+            if(-not($DisplayOnlyError))
+            {
+                write-verbose "NONE: creating range $IPRange on $BoundaryName" 
+            }
             New-IPRBoundary -IPRange $IPRange -Country $country -SiteName $Name
         } else {
             foreach($o in $overlap)
@@ -714,19 +730,19 @@ function import-csv2boundaries
                         # vérifier que la range existante est cohérente (nom de la range)
                         # vérifier que le supernet ne couvre pas d'autres range incompatible
                         # galère
-                        replace-IPRangeBoundary -IPRangeSource $o.IPRange -IPRangeTarget ($IPRange.Merge($o.IPRange)) -BoundaryName "$BoundaryName"
+                        replace-IPRangeBoundary -IPRangeSource $o.IPRange -IPRangeTarget ($IPRange.Merge($o.IPRange)) -BoundaryName "$BoundaryName" 
                     }
                     "OVERLAP" 
                     { 
                         # vérifier la cohérence de l'overlap avant de l'etendre 
                         # nom de la boundary, pas d'autre boundary exotique incluse
-                        replace-IPRangeBoundary -IPRangeSource $o.IPRange -IPRangeTarget ($IPRange.Merge($o.IPRange)) -BoundaryName "$BoundaryName"
+                        replace-IPRangeBoundary -IPRangeSource $o.IPRange -IPRangeTarget ($IPRange.Merge($o.IPRange)) -BoundaryName "$BoundaryName" 
                     }
                     "EXTENDING" 
                     {
                         # vérifier la cohérence de l'overlap avant de l'etendre 
                         # nom de la boundary, pas d'autre boundary exotique écrasée
-                        replace-IPRangeBoundary -IPRangeSource $o.IPRange -IPRangeTarget ($IPRange.Merge($o.IPRange)) -BoundaryName "$BoundaryName"
+                        replace-IPRangeBoundary -IPRangeSource $o.IPRange -IPRangeTarget ($IPRange.Merge($o.IPRange)) -BoundaryName "$BoundaryName"  
                     }
                     "PERFECT_MATCH" 
                     { 
