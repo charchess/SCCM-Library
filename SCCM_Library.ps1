@@ -725,7 +725,7 @@ Class IPrange : System.IComparable
         } 
         elseif(($testedIPRange.IPStart.IPID -eq ($this.IPEnd.IPID + 1)) -or ($testedIPRange.IPEnd.IPID -eq ($this.IPStart.IPID - 1)))
         {
-            $found= "EXTENDING"
+            $found= "TOUCHING"
         }
         return $found
     }
@@ -856,7 +856,7 @@ Class IPRanges : System.IComparable
                 "COVERED" {return $false}
                 "NONE" {return $false}
                 "OVERLAP" {return $false}
-                "EXTENDING" {return $false}
+                "TOUCHING" {return $false}
                 default {throw("error : $err")}
             }
         }
@@ -873,7 +873,7 @@ Class IPRanges : System.IComparable
                 "COVERED" {return $false}
                 "NONE" {return $false}
                 "OVERLAP" {return $false}
-                "EXTENDING" {return $false}
+                "TOUCHING" {return $false}
                 default {throw("error : $err")}
             }
         }
@@ -984,10 +984,9 @@ function replace-IPRangeBoundary
                     $coveredRange.RemoveRange($o.IPRange)
                 }
             }
-            Log -message "(Debug) $IPRangeSource supress and replace by " -LogFile $LogFile
-            foreach($b in $coveredRange.Ranges)
+            foreach($b in ($coveredRange.Ranges))
             {
-                Log -message "(Debug) -> New boundary $($b.IPRange) : $BoundaryName" -LogFile $LogFile
+                Log -message "(Debug) adding $b to $BoundaryName" -LogFile $LogFile
             }
         }
     }
@@ -1055,11 +1054,18 @@ function import-csv2boundaries
                         # nom de la boundary, pas d'autre boundary exotique incluse
                         replace-IPRangeBoundary -IPRangeSource $o.IPRange -IPRangeTarget ($IPRange + $o.IPRange) -BoundaryName "$BoundaryName" -LogFile $LogFile
                     }
-                    "EXTENDING" 
+                    "TOUCHING" 
                     {
                         # vérifier la cohérence de l'overlap avant de l'etendre 
                         # nom de la boundary, pas d'autre boundary exotique écrasée
-                        replace-IPRangeBoundary -IPRangeSource $o.IPRange -IPRangeTarget ($IPRange + $o.IPRange) -BoundaryName "$BoundaryName" -LogFile $LogFile
+                        if($i.BoundaryName -eq $BoundaryName)
+                        {
+                            replace-IPRangeBoundary -IPRangeSource $o.IPRange -IPRangeTarget ($IPRange + $o.IPRange) -BoundaryName "$BoundaryName" -LogFile $LogFile
+                        }
+                        else
+                        {
+                            Log -message "(DEBUG) Touching subnet $IPRange ($BoundaryName) -> $($o.IPRange) ($($o.BoundaryName))" -LogFile $LogFile
+                        }
                     }
                     "PERFECT_MATCH" 
                     { 
