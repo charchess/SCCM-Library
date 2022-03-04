@@ -1,4 +1,7 @@
 . $PSScriptRoot\..\SCCM_Library.ps1
+. $PSScriptRoot\SCCM_Library.ps1
+write-host "test $(get-currentlocation)"
+
 
 BeforeAll { 
     $IP1=[IPAddress] "127.0.0.1/8"
