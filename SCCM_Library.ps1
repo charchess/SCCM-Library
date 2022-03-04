@@ -1007,7 +1007,7 @@ function import-csv2boundaries
     $ADSubnets=Import-Csv -Path $filepath -Delimiter "`t" | Where-Object {$_.Site -match "$filter"}
     $count=0
     Log -message "-------------------------------------------`n<Info> Starting new import. ($(get-date)) filter : $filter, lines : $($ADSubnets.count)" -LogFile $LogFile 
-       
+
     foreach($ADSubnet in ($ADSubnets))
     {
         # TBD: ajouter des infos d'action (creation/replace) dans la barre de progression
