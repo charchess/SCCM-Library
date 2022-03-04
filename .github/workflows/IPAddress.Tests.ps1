@@ -1,8 +1,7 @@
 BeforeAll { 
-    . ./SCCM_Library.ps1
+    . $PSScriptRoot\..\SCCM_Library.ps1
     $IP1=[IPAddress] "127.0.0.1/8"
     $IP2=[IPAddress] "10.0.0.1/255.255.255.0"
-    $path=get-currentLocation
 }
 
 Describe 'Check IPAddress class is working as expected' {
