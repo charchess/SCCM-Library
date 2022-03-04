@@ -1,6 +1,7 @@
 BeforeAll { 
     $IP1=[IPAddress] "127.0.0.1/8"
     $IP2=[IPAddress] "10.0.0.1/255.255.255.0"
+    $path=get-currentLocation
 }
 
 Describe 'Check IPAddress class is working as expected' {
@@ -9,5 +10,8 @@ Describe 'Check IPAddress class is working as expected' {
     }
     It 'Check Mask to Prefix is working' {
         $IP2.Prefix | Should -Be 24
+    }
+    It 'test path' {
+        $path | should -Be 0
     }
 }
