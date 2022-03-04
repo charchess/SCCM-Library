@@ -1,14 +1,180 @@
+function deploy-NewDistributionPoint
+{
+    Param(
+        $SiteCode = 'B06',
+        $DistributionPoint = 'NZAKLSCCM001.AS.DIR.GRPLEG.COM',
+        $PXEpass="dellgrpleg",
+        $City="Auckland"
+        )
+    
+    $Domain = ($DistributionPoint.Split('.'))[1]
+    $DPShortName = $($DistributionPoint.Split('.'))[0]
+    $DPSamAccountName = $DPShortName + '$'
+    if($DPShortName.Substring(3) -like "INF")
+    {
+        $country=$DPShortName.Substring(3,2)
+    } else {
+        $country=$DPShortName.Substring(0,2)
+    }
+
+
+    # prerequisite checks
+
+    # check machine up
+    if(-not(Test-Connection -quiet -Count 1 -ComputerName $DistributionPoint))
+    {
+        Write-host "$DistributionPoint is down"
+        break    
+    }
+
+    # check server sccm group admin local
+    $group2Add="EU\GUS-SCCM-Servers-Admins-$($Domain)"
+    if(-not(Invoke-Command -ComputerName $DistributionPoint -ScriptBlock{Get-LocalGroupMember -SID S-1-5-32-544 -Member $args[0] -ErrorAction SilentlyContinue} -ArgumentList $group2Add))
+    {
+        "Adding $group2add to local admin"
+        Invoke-Command -ComputerName $DistributionPoint -ScriptBlock {add-LocalGroupMember -SID S-1-5-32-544 -Member $args[0]} -ArgumentList $group2Add 
+    }
+
+    # check Primary is in local admin group
+    $computer2Add="EU\INFFRPA3017$"
+    if(-not(Invoke-Command -ComputerName $DistributionPoint -ScriptBlock{Get-LocalGroupMember -SID S-1-5-32-544 -Member $args[0] -ErrorAction SilentlyContinue} -ArgumentList $computer2Add))
+    {
+        "Adding $computer2Add to local admin"
+        Invoke-Command -ComputerName $DistributionPoint -ScriptBlock {add-LocalGroupMember -SID S-1-5-32-544 -Member $args[0]} -ArgumentList $computer2Add 
+    }
+
+    # check MP is in local admin group
+    if(-not($computer2Add=((Get-CMSite -SiteCode $SiteCode).ServerName.Split("."))[0]))
+    {
+        "couldn't find server for $SiteCode"
+        break
+    }
+
+    $computer2Add="$Domain\$computer2Add" + '$'
+    if(-not(Invoke-Command -ComputerName $DistributionPoint -ScriptBlock{Get-LocalGroupMember -SID S-1-5-32-544 -Member $args[0] -ErrorAction SilentlyContinue} -ArgumentList $computer2Add))
+    {
+        "Adding $computer2Add to local admin"
+        Invoke-Command -ComputerName $DistributionPoint -ScriptBlock {add-LocalGroupMember -SID S-1-5-32-544 -Member $args[0]} -ArgumentList $computer2Add 
+    }
+
+
+
+    # adding the computer object to the proper AD group
+    switch($Domain)
+    {
+        "AM" { $server="AM.DIR.GRPLEG.COM";$group="ADM-US-WES-SCCM-AllServers"}
+        "AS" { $server="AS.DIR.GRPLEG.COM";$group="ADM-AS-FRLGS-SCCM-AllServers"}
+        "EU" { $server="EU.DIR.GRPLEG.COM";$group="ADM-FRLGS-SCCM-AllServers"}
+        default {"cannot identify domain";break}
+    }
+
+    if(-not((Get-ADGroupMember -Server $server -Identity $group).Name.contains($DPShortName)))
+    {
+        "adding $DPShortName to $group on $server"
+        Add-ADGroupMember -server $server -Identity $group -Members $DPsamAccountName
+    }
+
+    #Install Site System Server
+    if(-not($CMSiteSystemServer=Get-CMSiteSystemServer -AllSite | where {$_.NALPath -match "$DPShortName"}))
+    {
+        "Creating $DistributionPoint on $SiteCode"
+        $CMSiteSystemServer=New-CMSiteSystemServer -ServerName $DistributionPoint -SiteCode $SiteCode
+    } else {
+        "$DistributionPoint is already a site system"
+    }
+
+    #Optional - Install SCCM IIS Base components
+    Invoke-Command -ComputerName $DistributionPoint -ScriptBlock {dism.exe /online /norestart /enable-feature /ignorecheck /featurename:"IIS-WebServerRole" /featurename:"IIS-WebServer" /featurename:"IIS-CommonHttpFeatures" /featurename:"IIS-StaticContent" /featurename:"IIS-DefaultDocument" /featurename:"IIS-DirectoryBrowsing" /featurename:"IIS-HttpErrors" /featurename:"IIS-HttpRedirect" /featurename:"IIS-WebServerManagementTools" /featurename:"IIS-IIS6ManagementCompatibility"  /featurename:"IIS-Metabase" /featurename:"IIS-WindowsAuthentication"  /featurename:"IIS-WMICompatibility"  /featurename:"IIS-ISAPIExtensions" /featurename:"IIS-ManagementScriptingTools" /featurename:"MSRDC-Infrastructure" /featurename:"IIS-ManagementService"}
+
+    #Install Distribution Point Role
+    write-host "The Distribution Point Role is being Installed on $DistributionPoint"
+    if(-not($CMDistributionPoint=Get-CMDistributionPoint -SiteSystemServerName $DistributionPoint -SiteCode $SiteCode))
+    {
+        "creating DP on $DistributionPoint"
+        $CMDistributionPoint=Add-CMDistributionPoint -CertificateExpirationTimeUtc ((get-date).addyears(5)) -SiteCode $SiteCode -SiteSystemServerName $DistributionPoint -MinimumFreeSpaceMB 1024 -ClientConnectionType 'Intranet' -PrimaryContentLibraryLocation Automatic -PrimaryPackageShareLocation Automatic -SecondaryContentLibraryLocation Automatic -SecondaryPackageShareLocation Automatic
+    } else {
+        "DP already created on $DistributionPoint"
+    }
+
+
+    #Define PXE Password
+    $PXEpass = convertto-securestring -string "password" -asplaintext -force
+
+    #Enable PXE, Unknown Computer Support, Client Communication Method
+    Set-CMDistributionPoint -SiteSystemServerName $DistributionPoint -SiteCode $SiteCode -EnablePxe $True -PXEpassword $PXEpass -PxeServerResponseDelaySeconds 0 -AllowPxeResponse $True -EnableUnknownComputerSupport $True -UserDeviceAffinity "AllowWithAutomaticApproval" -EnableContentValidation $True -ClientCommunicationType Http -EnableAnonymous $true -EnableBranchCache $true -EnableDoinc $true -DiskSpaceDoinc 50 -AgreeDoincLicense $true
+
+
+    #Enable Multicast Feature
+    # Add-CMMulticastServicePoint -SiteSystemServerName $DistributionPoint -SiteCode $SiteCode
+
+
+
+    # post install task
+    # add DP to groups (all et OSD)
+    Add-CMDistributionPointToGroup -DistributionPoint $CMDistributionPoint -DistributionPointGroupName "All On-Premises Distribution Points"
+    Add-CMDistributionPointToGroup -DistributionPoint $CMDistributionPoint -DistributionPointGroupName "OSD_Win10_PROD_Distribution_Point_Group"
+
+
+    # add or create boundary group
+    $BGName="BG-Content-$country-$city"
+    if(-not($CMBoundaryGroup=Get-CMBoundaryGroup -Name $BGName))
+    {
+        "Creating boundary group $BGName"
+        $CMBoundaryGroup=New-CMBoundaryGroup -AddSiteSystemServer $CMSiteSystemServer -Name $BGName
+    } else {
+        "$BGName already exists"
+    }
+
+    # check or create boundary / IPRange
+
+    $IP=[IPAddress] (Invoke-Command -ComputerName $DistributionPoint -ScriptBlock { (Get-NetIPAddress).where({$_.IPAddress -match "10\.\d+\.\d+\.\d+"}).IPAddress })
+    $prefixLength=(Invoke-Command -ComputerName $DistributionPoint -ScriptBlock { (Get-NetIPAddress).where({$_.IPAddress -match "10\.\d+\.\d+\.\d+"}).PrefixLength })
+
+
+    # stolent from https://codeandkeep.com/PowerShell-Get-Subnet-NetworkID/
+    $bitString=('1' * $prefixLength).PadRight(32,'0')
+    $ipString=[String]::Empty
+    # make 1 string combining a string for each byte and convert to int
+    for($i=0;$i -lt 32;$i+=8){
+    $byteString=$bitString.Substring($i,8)
+    $ipString+="$([Convert]::ToInt32($byteString, 2))."
+    }
+    $mask=[ipaddress] ($ipString.TrimEnd('.'))
+
+    # we reverse the mask (to get the host part)
+    $reverseMask=[IPAddress] (-bnot([uint32]$mask.Address))
+
+    # we calculate the starting and ending IP
+    $startIP=[IPAddress] ($IP.Address -band $mask.Address)
+    $endIP=[IPAddress] ($IP.Address -bor $reversemask.Address)
+    $IPRange="$startIP-$endIP"
+
+    $IPRName="$Country-IPR_$City"
+    if(-not($CMBoundary=Get-CMBoundary -BoundaryName $IPRName))
+    {
+        "creating boundary $IPRName with range $IPRange for $DPShortName / $SiteCode"
+        New-CMBoundary -Name $IPRName -Type IPRange -Value $IPRange
+    } else {
+        "boundary $IPRName already exist with IPRange : $($CMBoundary.Value)"
+    }
+
+    # we add the proper BG to that boundary
+    Add-CMBoundaryToGroup  -InputObject $CMBoundary -BoundaryGroupInputObject $CMBoundaryGroup
+    Add-CMBoundaryToGroup  -InputObject $CMBoundary -BoundaryGroupName "BG-SUP-Default"
+    Add-CMBoundaryToGroup  -InputObject $CMBoundary -BoundaryGroupName "BG-Site-$SiteCode"
+}
+
 function check-alloverlaping
 {
     [cmdletbinding()]
 
-    $CMBoundaries=(Get-CMBoundary | where {$_.boundarytype -eq 3})
+    $CMBoundaries=(Get-CMBoundary | Where-Object {$_.boundarytype -eq 3})
 
     foreach($CMboundary in $CMBoundaries)
     {
         if($text=check-overlaping -IPBoundary $CMBoundary.value -ignorePerfectMatch)
         {
-            "$($CMboundary.Value) : $($CMboundary.DisplayName) -> $($text.match) $($text.BoundaryName)"
+            "$($CMboundary.DisplayName) ( $($CMboundary.Value) ) $($text.match) $($text.BoundaryName) ($($text.IPRange))"
         }        
     }
 }
@@ -21,7 +187,7 @@ function check-overlaping
         [Parameter(Mandatory=$true)][IPRange] $IPBoundary,
         [Parameter(Mandatory=$false)][switch] $ignorePerfectMatch=$false
     )
-    $CMBoundaries=(Get-CMBoundary | where {$_.boundarytype -eq 3})
+    $CMBoundaries=(Get-CMBoundary | where-object {$_.boundarytype -eq 3})
 
     $Found = [System.Collections.ArrayList]::new()
 
@@ -32,7 +198,7 @@ function check-overlaping
             continue
         }
 
-        if(($result=$IPBoundary.CompareTo([IPRange] ($existingIPBoundary.value))) -ne "NONE")
+        if(($result=$IPBoundary.Compare([IPRange] ($existingIPBoundary.value))) -ne "NONE")
         {
             if(-not($ignorePErfectMatch) -or $result -ne "PERFECT_MATCH")
             {
@@ -480,6 +646,10 @@ class IPAddress : System.IComparable
         }
         return $false
     }
+    [string] ToString()
+    {
+        return $this.Address
+    }
 }
 
 Class IPrange : System.IComparable
@@ -533,7 +703,7 @@ Class IPrange : System.IComparable
     {
         return 0
     }
-    [string] CompareTo([IPRange] $testedIPRange)
+    [string] Compare([IPRange] $testedIPRange)
     {
         $found="NONE"
         if(($testedIPRange.IPStart.IPID -eq $this.IPStart.IPID) -and ($testedIPRange.IPEnd.IPID -eq $this.IPEnd.IPID))
@@ -543,11 +713,11 @@ Class IPrange : System.IComparable
         elseif(($testedIPRange.IPStart.IPID -le $this.IPStart.IPID) -and ($testedIPRange.IPEnd.IPID -ge $this.IPEnd.IPID))
         {
             # means the IPRange tested is bigger and enveloping the actual IPRange
-            $found= "INCLUDING"
+            $found= "INCLUDED"
         }
         elseif(($testedIPRange.IPStart.IPID -ge $this.IPStart.IPID) -and ($testedIPRange.IPEnd.IPID -le $this.IPEnd.IPID))
         {
-            $found= "INCLUDED"
+            $found= "COVERED"
         }
         elseif((($testedIPRange.IPStart.IPID -ge $this.IPStart.IPID) -and ($testedIPRange.IPStart.IPID -le $this.IPEnd.IPID)) -or (($testedIPRange.IPEnd.IPID -ge $this.IPStart.IPID) -and ($testedIPRange.IPEnd.IPID -le $this.IPEnd.IPID)))
         {
@@ -605,9 +775,45 @@ Class IPRanges : System.IComparable
         $this.FullMergeRanges()
         # TBD: optimiser en faisant un merge selectif/recursif
     }
-    RemoveRange ([IPRange] $IPRange)
+    RemoveRange ([IPRange] $IPRangeToRemove)
     {
-        # TBD
+
+        for($i = 0; $i -lt ($this.Ranges).Count; $i++)
+        {
+            if($IPRangeToRemove.IPStart.IPID -le $this.Ranges[$i].IPStart.IPID )
+            {
+                # le debut du segment a supprimer commence avant le debut du segment cible 
+                if($IPRangeToRemove.IPEnd.IPID -ge $this.Ranges[$i].IPEnd.IPID)
+                {
+                    # ET la fin du segment a supprimer est après la fin du segment cible
+                    $this.Ranges.removeat($i)
+                } 
+                elseif($IPRangeToRemove.EPEnd.IPID -ge $this.Ranges[$i].IPStart.IPID)
+                {
+                    # ET la fin du segment a supprimer est avant la fin du segment cible 
+                    $this.Ranges[$i].IPStart.IPID=$IPRangeToRemove.IPEnd.IPID+1
+                }
+            }
+            elseif($IPRangeToRemove.IPStart.IPID -le $this.Ranges[$i].IPEnd.IPID)
+            {
+                # le debut du segment a supprimer est avant la fin du segment cible (mais après le début car "else")
+                if($IPRangeToRemove.IPEnd.IPID -ge $this.Ranges[$i].IPEnd.IPID)
+                {
+                    # La fin du segment a supprimer est au dela du segment cible 
+                    $this.Ranges[$i].IPEnd.IPID=$IPRangeToRemove.IPStart.IPID-1
+                } 
+                else
+                {
+                    # on a un segment a supprimer au milieu d'un autre segment -> split de segment
+                    $newIPStart=[IPAddress] ($IPRangeToRemove.IPEnd.Address)
+                    $newIPStart.IPID=$newIPStart.IPID+1
+                    $newIPEnd=[IPAddress] ($this.Ranges[$i].IPEnd.Address)
+                    $newIPRange=[IPRange] "$newIPStart-$newIPEnd"
+                    $this.Ranges.Add($newIPRange)
+                    $this.Ranges[$i].IPEnd.IPID=$IPRangeToRemove.IPStart.IPID-1
+                }
+            }
+        }
     }
     SplitRange ([int] $val)
     {
@@ -626,18 +832,71 @@ Class IPRanges : System.IComparable
             }
         }
     }
+    [string] ToString()
+    {  
+        [string] $string=""
+        foreach($IPRange in $this.Ranges)
+        {
+            $string+="($IPRange) "
+        }
+        return $string
+    }
     [int] CompareTo($val)
     {
         return 0
     }
-    Debug()
+    [bool] isCoveredBy([IPRange] $range)
     {
-        $this.Ranges
-        $this.Ranges.Count
-        $this.Ranges.Length
+        foreach($r in $this.Ranges)
+        {
+            switch($err=$r.Compare($range))
+            {
+                "PERFECT_MATCH" {return $true}
+                "INCLUDED" {return $true}
+                "COVERED" {return $false}
+                "NONE" {return $false}
+                "OVERLAP" {return $false}
+                "EXTENDING" {return $false}
+                default {throw("error : $err")}
+            }
+        }
+        return $false
+    }
+    [bool] isCovering([IPRange] $range)
+    {
+        foreach($r in $this.Ranges)
+        {
+            switch($err=$range.Compare($r))
+            {
+                "PERFECT_MATCH" {return $true}
+                "INCLUDED" {return $true}
+                "COVERED" {return $false}
+                "NONE" {return $false}
+                "OVERLAP" {return $false}
+                "EXTENDING" {return $false}
+                default {throw("error : $err")}
+            }
+        }
+        return $false
     }
 }
 
+function Log
+{
+    Param(
+        [Parameter(Mandatory=$true)][string] $message,
+        [Parameter(Mandatory=$false)][string] $LogFile
+    )
+    if($LogFile)
+    {
+        $message | Out-File -Append -FilePath $LogFile
+    }
+    else
+    {
+        write-host $message
+    }
+
+}
 
 function backup-boundaries
 {
@@ -667,42 +926,70 @@ function replace-IPRangeBoundary
         [Parameter(Mandatory=$true)][string] $IPRangeTarget,
         [Parameter(Mandatory=$true)][string] $BoundaryName,
         [Parameter(Mandatory=$false)][switch] $force,
-        [Parameter(Mandatory=$false)][switch] $DisplayOnlyError
+        [Parameter(Mandatory=$false)][string] $LogFile
     )
     # nom de la boundary, pas d'autre boundary exotique écrasée
+    # on compte les boundaries exotiques (celles qui ne matchent pas le nom de boundary que l'on veut ajouter)
     $overlaps=check-overlaping -IPBoundary ($IPRangeTarget)
     $exoticBoundaryNameCount=0
     $exoticBoundaryName=""
+    $coveredRange=[IPRanges]::new()
     foreach($o in $overlaps)
     {
+        $coveredRange.AddRange($o.IPRange) 
         if($o.BoundaryName -notmatch $BoundaryName)
         {
             $exoticBoundaryNameCount++
             $exoticBoundaryName+="$($o.BoundaryName) "
         }
     }
-    # TBD: etre plus explicite sur les actions (couvertures de range deja existentes....)
+    # TBD: etre plus explicite (est ce que les ranges existantes couvrent intégralement la range cible)
     if(($exoticBoundaryNameCount -eq 0) -or $force)
     {
-        if(-not($DisplayOnlyError))
-        {
-            write-host "trying to replace $IPRangeSource with $IPRangeTarget for $BoundaryName"
-        }
+        # si il n'y a pas de boundary exotique alors on étend la range
+        Log -message "<Info> Replacing $IPRangeSource with $IPRangeTarget for $BoundaryName" -LogFile $LogFile
+
+        # on compte quand meme les boundaries présente et bloquante (similaire du coup à ce que l'on deploit)
         $CMBoundary=Get-CMBoundary | where-object {($_.Value -match $IPRangeSource) -and ($_.DisplayName -match $BoundaryName)}
-        if(Get-CMBoundary | where-object {($_.Value -match $IPRangeTarget) -and ($_.DisplayName -match $BoundaryName)})
+        if($BoundaryToRemove=Get-CMBoundary | where-object {($_.Value -match $IPRangeTarget) -and ($_.DisplayName -match $BoundaryName)})
         {  
-            write-host "Target range $IPRangeTarget already exist, can't extend $IPRangeSource - $BoundaryName"
+            Log -message "<Info> Target range $IPRangeTarget already exist, extending $IPRangeSource - $BoundaryName" -LogFile $LogFile
+            foreach($b in $BoundaryToRemove)
+            {
+                Log -message "<Info> Removing boundary $($b.DisplayName) - $($b.Value)" -LogFile $LogFile
+                $b | Remove-CMBoundary -force
+            }
         }
-        else
-        {
-            $CMBoundary | Set-CMBoundary -NewValue $IPRangeTarget
-        }
+
+        $CMBoundary | Set-CMBoundary -NewValue $IPRangeTarget
     }
     else
     {
-        # throw("some boundaries ($exoticBoundaryNameCount) not matching $BoundaryName are present in the range $IPRangeTarget")
-        write-host "some boundaries ($exoticBoundaryNameCount : $exoticBoundaryName) not matching $BoundaryName are present in the range $IPRangeTarget"
-        # TBD: add a check if range is fully covered by those boundaries
+        # couvrir les "trous" avec la range en cours
+        # absorber les ranges de meme nom
+        # coveredRange contient les range couvertes par les exotique
+        $Coverage=$coveredRange.isCovering($IPRangeTarget)
+        if($Coverage)
+        {
+            Log -message "<Info> $exoticBoundaryNameCount boundaries ($exoticBoundaryName) not matching $BoundaryName are already present in the range $IPRangeTarget range covered : $coveredRange" -LogFile $LogFile
+        }
+        else
+        {
+            Log -message "<Warning> $exoticBoundaryNameCount boundaries ($exoticBoundaryName) not matching $BoundaryName are already present in the range $IPRangeTarget range covered : $coveredRange" -LogFile $LogFile
+            # la on a des trous, on ne peut pas etendre autant qu'on veut à cause de boundary conflictuelles
+            foreach($o in $overlaps)
+            {
+                if($o.BoundaryName -ne $BoundaryName)
+                {
+                    $coveredRange.RemoveRange($o.IPRange)
+                }
+            }
+            Log -message "(Debug) $IPRangeSource supress and replace by " -LogFile $LogFile
+            foreach($b in $coveredRange.Ranges)
+            {
+                Log -message "(Debug) -> New boundary $($b.IPRange) : $BoundaryName" -LogFile $LogFile
+            }
+        }
     }
 }
 
@@ -713,16 +1000,14 @@ function import-csv2boundaries
 
     param(
         [parameter(Mandatory=$false)][string] $filePath="$env:USERPROFILE\Documents\export_subnets.csv",
-        [parameter(Mandatory=$false)][string] $filter,
-        [parameter(Mandatory=$false)][switch] $DisplayOnlyError
+        [parameter(Mandatory=$false)][string] $filter="",
+        [parameter(Mandatory=$false)][string] $LogFile 
     )
     Write-Progress -Activity "importing $filepath"
     $ADSubnets=Import-Csv -Path $filepath -Delimiter "`t" | Where-Object {$_.Site -match "$filter"}
     $count=0
-
-    write-host "`n`n`n`n`n`n"
-
-
+    Log -message "-------------------------------------------`n<Info> Starting new import. ($(get-date)) filter : $filter, lines : $($ADSubnets.count)" -LogFile $LogFile 
+       
     foreach($ADSubnet in ($ADSubnets))
     {
         # TBD: ajouter des infos d'action (creation/replace) dans la barre de progression
@@ -738,10 +1023,7 @@ function import-csv2boundaries
         $overlap=check-overlaping -IPBoundary ($IPRange.ToString())
         if(-not($overlap))
         {
-            if(-not($DisplayOnlyError))
-            {
-                write-verbose "NONE: creating range $IPRange on $BoundaryName" 
-            }
+            Log -message "<Info> NONE: creating range $IPRange on $BoundaryName" -LogFile $LogFile
             New-IPRBoundary -IPRange $IPRange -Country $country -SiteName $Name
         } else {
             foreach($o in $overlap)
@@ -750,49 +1032,47 @@ function import-csv2boundaries
                 switch($o.match)
                 {
                 # on est a priori bon, reste a check les boundary quand on veut remplacer/etendre
-                    "INCLUDING" 
+                    "INCLUDED" 
                     {
                         # la range proposée est incluse dans une range existente, rien à faire
-                        # Amelioration : vérifier que la range est cohérente
-                        write-verbose " $IPRange is included in $($o.IPRange) - $($o.BoundaryName)" 
+                        write-verbose " $IPRange is covered by $($o.IPRange) - $($o.BoundaryName)" 
                         if($o.BoundaryName -ne $BoundaryName)
                         {
-                            "Boundary $($o.IPRange) already exist inside a different Boundary : $($o.BoundaryName)"
+                            Log -message "<Info> Boundary $IPRange is already covered by a different Boundary : $($o.BoundaryName) ($($o.IPRange))" -LogFile $LogFile
                         }
-
                     }
-                    "INCLUDED" 
+                    "COVERED" 
                     {
                         # La range proposée inclus une range existante dans SCCM
                         # vérifier que la range existante est cohérente (nom de la range)
                         # vérifier que le supernet ne couvre pas d'autres range incompatible
                         # galère
-                        replace-IPRangeBoundary -IPRangeSource $o.IPRange -IPRangeTarget ($IPRange + $o.IPRange) -BoundaryName "$BoundaryName" 
+                        replace-IPRangeBoundary -IPRangeSource $o.IPRange -IPRangeTarget ($IPRange + $o.IPRange) -BoundaryName "$BoundaryName" -LogFile $LogFile
                     }
                     "OVERLAP" 
                     { 
                         # vérifier la cohérence de l'overlap avant de l'etendre 
                         # nom de la boundary, pas d'autre boundary exotique incluse
-                        replace-IPRangeBoundary -IPRangeSource $o.IPRange -IPRangeTarget ($IPRange + $o.IPRange) -BoundaryName "$BoundaryName" 
+                        replace-IPRangeBoundary -IPRangeSource $o.IPRange -IPRangeTarget ($IPRange + $o.IPRange) -BoundaryName "$BoundaryName" -LogFile $LogFile
                     }
                     "EXTENDING" 
                     {
                         # vérifier la cohérence de l'overlap avant de l'etendre 
                         # nom de la boundary, pas d'autre boundary exotique écrasée
-                        replace-IPRangeBoundary -IPRangeSource $o.IPRange -IPRangeTarget ($IPRange + $o.IPRange) -BoundaryName "$BoundaryName"  
+                        replace-IPRangeBoundary -IPRangeSource $o.IPRange -IPRangeTarget ($IPRange + $o.IPRange) -BoundaryName "$BoundaryName" -LogFile $LogFile
                     }
                     "PERFECT_MATCH" 
                     { 
                         # une range identique existe, vérifier la cohérence du nom
-                        write-verbose "PERFECT_MATCH, do nothing ($IPRange)" 
+                        write-verbose "<Info> PERFECT_MATCH, do nothing ($IPRange)" 
                         if($o.BoundaryName -ne $BoundaryName)
                         {
-                            "Boundary $($o.IPRange) already exist with a different Name : $($o.BoundaryName)"
+                            Log -message "<Info> Boundary $($o.IPRange) already exist with a different Name : $($o.BoundaryName)" -LogFile $LogFile
                         }
                     }
                     default 
                     {
-                        "erreur : $($o.match)"
+                        Log -message "(ERROR) erreur : $($o.match)" -LogFile $LogFile
                     }
                 }
             }
