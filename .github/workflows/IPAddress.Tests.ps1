@@ -1,5 +1,9 @@
-Describe "Check results file is present" {
-    It "Check results file is present" {
-      [IPddress] "127.0.0.1/8" | Should -Be $true
+BeforeAll { 
+    $IP1=[PAddress] "127.0.0.1/8"
+}
+
+Describe 'IPAddress' {
+    It 'Check it is an IPAdress' {
+        $IP1.Prefix | Should -Be 8
     }
 }
