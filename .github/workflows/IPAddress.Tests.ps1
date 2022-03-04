@@ -8,6 +8,6 @@ Describe 'Check IPAddress class is working as expected' {
         $IP1.Mask | Should -Be "255.0.0.0"
     }
     It 'Check Mask to Prefix is working' {
-        $IP2.Prefix | Should -Be 23
+        $IP2.Prefix | Should -Be 24
     }
 }
