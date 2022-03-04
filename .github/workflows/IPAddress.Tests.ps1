@@ -5,9 +5,9 @@ BeforeAll {
 
 Describe 'Check IPAddress class is working as expected' {
     It 'Check Prefix to mask is working' {
-        $IP1.Mask | Should -Be 8"255.0.0.0"
+        $IP1.Mask | Should -Be "255.0.0.0"
     }
     It 'Check Mask to Prefix is working' {
-        $IP2.Prefix | Should -Be 24
+        $IP2.Prefix | Should -Be 23
     }
 }
