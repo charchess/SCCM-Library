@@ -2,13 +2,11 @@ name: Test PowerShell on Ubuntu
 on: push
 
 jobs:
-  pester-test:
-    name: Pester test
+  IPAddress-testing:
+    name: IPAddress class testing
     runs-on: ubuntu-latest
     steps:
-      - name: Check out repository code
-        uses: actions/checkout@v2
-      - name: Perform a Pester test from the Tests.ps1 file
+      - name: Perform a validation of class IPAddress file
         shell: pwsh
         run: |
           Invoke-Pester IPAddress.Tests.ps1 -Passthru
