@@ -697,6 +697,10 @@ Class IPrange : System.IComparable
             $this.IPStart = $extension.IPStart
             $isMerged=$true
         }
+        if(($extension.IPStart.IPID -ge ($this.IPStart.IPID)) -and ($extension.IPEnd.IPID -le $this.IPEnd.IPID))
+        {
+            $isMerged=$true
+        }
         return $isMerged
     }
     [int] CompareTo($val)
@@ -737,6 +741,10 @@ Class IPrange : System.IComparable
     { 
         $return=[IPRange] "$($b)" 
         $isExtended=$false
+        if(($a.IPStart.IPID -ge ($return.IPStart.IPID)) -and ($a.IPEnd.IPID -le $return.IPEnd.IPID))
+        {
+            $isExtended=$true
+        }
         if(($a.IPStart.IPID -le ($return.IPEnd.IPID + 1)) -and ($a.IPEnd.IPID -gt $return.IPEnd.IPID))
         {
             $return.IPEnd = $a.IPEnd
@@ -762,6 +770,7 @@ Class IPRanges : System.IComparable
 
     IPRanges ()
     {
+        $this.Ranges = [System.Collections.Generic.List[IPRange]]::new()        
     }
 
     IPRanges ([IPRange] $IPRange)
@@ -825,6 +834,10 @@ Class IPRanges : System.IComparable
         {
             for($i = 0; $i -lt ($this.Ranges).Count; $i++)
             {
+                if($i -eq $j)
+                {
+                    continue
+                }
                 if($this.Ranges[$i].Merge($this.Ranges[$j]))
                 {
                     $this.Ranges.removeat($j)
@@ -837,7 +850,11 @@ Class IPRanges : System.IComparable
         [string] $string=""
         foreach($IPRange in $this.Ranges)
         {
-            $string+="($IPRange) "
+            $string+="$IPRange "
+        }
+        if($string.length -gt 0)
+        {
+            $string.Substring(0, $string.Length-1)
         }
         return $string
     }
