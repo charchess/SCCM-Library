@@ -127,7 +127,7 @@ function deploy-NewDistributionPoint
 
     # check or create boundary / IPRange
 
-    $IP=[IPAddress] (Invoke-Command -ComputerName $DistributionPoint -ScriptBlock { (Get-NetIPAddress).where({$_.IPAddress -match "10\.\d+\.\d+\.\d+"}).IPAddress })
+    $IP=[IP] (Invoke-Command -ComputerName $DistributionPoint -ScriptBlock { (Get-NetIPAddress).where({$_.IPAddress -match "10\.\d+\.\d+\.\d+"}).IPAddress })
     $prefixLength=(Invoke-Command -ComputerName $DistributionPoint -ScriptBlock { (Get-NetIPAddress).where({$_.IPAddress -match "10\.\d+\.\d+\.\d+"}).PrefixLength })
 
 
@@ -139,14 +139,14 @@ function deploy-NewDistributionPoint
     $byteString=$bitString.Substring($i,8)
     $ipString+="$([Convert]::ToInt32($byteString, 2))."
     }
-    $mask=[ipaddress] ($ipString.TrimEnd('.'))
+    $mask=[IP] ($ipString.TrimEnd('.'))
 
     # we reverse the mask (to get the host part)
-    $reverseMask=[IPAddress] (-bnot([uint32]$mask.Address))
+    $reverseMask=[IP] (-bnot([uint32]$mask.Address))
 
     # we calculate the starting and ending IP
-    $startIP=[IPAddress] ($IP.Address -band $mask.Address)
-    $endIP=[IPAddress] ($IP.Address -bor $reversemask.Address)
+    $startIP=[IP] ($IP.Address -band $mask.Address)
+    $endIP=[IP] ($IP.Address -bor $reversemask.Address)
     $IPRange="$startIP-$endIP"
 
     $IPRName="$Country-IPR_$City"
@@ -384,7 +384,7 @@ function New-IPRBoundary
     Add-CMBoundaryToGroup -BoundaryId ($cmboundary.BoundaryID) -BoundaryGroupName "BG-SUP-Default"
 }
 
-class IPAddress : System.IComparable
+class IP : System.IComparable
 {
     hidden static $_maskType = 
     @{
@@ -468,11 +468,11 @@ class IPAddress : System.IComparable
         $IPID = $this::_IPIDType
         $this |Add-Member @IPID
     }
-    IPAddress()
+    IP()
     {
         $this.Constructor_common()
     }
-    IPAddress([string] $Address)
+    IP([string] $Address)
     {
         $this.Constructor_common()
         if($Address -match '^[\s]*(\d*.\d*.\d*.\d*)[\s]*$')
@@ -625,9 +625,9 @@ class IPAddress : System.IComparable
     { 
         if($IPAddress -is [string])
         {
-            $IPAddress=[IPAddress] $IPAddress
+            $IPAddress=[IP] $IPAddress
         }
-        if($IPAddress -is [IPAddress])
+        if($IPAddress -is [IP])
         {
             if($IPAddress.IPID -lt $this.IPID)
             {
@@ -654,14 +654,14 @@ class IPAddress : System.IComparable
 
 Class IPrange : System.IComparable
 {
-    [IPAddress] $IPStart
-    [IPAddress] $IPEnd
+    [IP] $IPStart
+    [IP] $IPEnd
     [int] $size=0
 
-    IPRange ([IPAddress] $StartIP, [IPAddress] $EndIP)
+    IPRange ([IP] $StartIP, [IP] $EndIP)
     {
-        $this.IPStart=[IPAddress] $StartIP
-        $this.IPEnd=[IPAddress] $EndIP
+        $this.IPStart=[IP] $StartIP
+        $this.IPEnd=[IP] $EndIP
         $this.size=$this.IPEndID - $this.IPStartID
     }
     IPRange ([string] $IPrange)
@@ -669,16 +669,16 @@ Class IPrange : System.IComparable
         $IPrange=$IPrange.Replace(' ','')
         if($IPrange -match '^(\d*\.\d*\.\d*\.\d*)-(\d*\.\d*\.\d*\.\d*)$')
         {
-            $this.IPStart=[IPAddress] $matches[1]
-            $this.IPEnd=[IPAddress] $matches[2]
+            $this.IPStart=[IP] $matches[1]
+            $this.IPEnd=[IP] $matches[2]
         } elseif($IPrange -match '^(\d*\.\d*\.\d*\.\d*)/(\d*)$')
         {
-            $IP=[IPAddress] $IPrange
+            $IP=[IP] $IPrange
             $this.IPStart=$IP.startIP
             $this.IPEnd=$IP.EndIP
         } elseif($IPrange -match '^(\d*\.\d*\.\d*\.\d*)/(\d*\.\d*\.\d*\.\d*)$')
         {
-            $IP=[IPAddress] $IPrange
+            $IP=[IP] $IPrange
             $this.IPStart=$IP.startIP
             $this.IPEnd=$IP.EndIP
         }
@@ -805,9 +805,9 @@ Class IPRanges : System.IComparable
                 else
                 {
                     # on a un segment a supprimer au milieu d'un autre segment -> split de segment
-                    $newIPStart=[IPAddress] ($IPRangeToRemove.IPEnd.Address)
+                    $newIPStart=[IP] ($IPRangeToRemove.IPEnd.Address)
                     $newIPStart.IPID=$newIPStart.IPID+1
-                    $newIPEnd=[IPAddress] ($this.Ranges[$i].IPEnd.Address)
+                    $newIPEnd=[IP] ($this.Ranges[$i].IPEnd.Address)
                     $newIPRange=[IPRange] "$newIPStart-$newIPEnd"
                     $this.Ranges.Add($newIPRange)
                     $this.Ranges[$i].IPEnd.IPID=$IPRangeToRemove.IPStart.IPID-1
