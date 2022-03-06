@@ -7,7 +7,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Loading powershell
-        uses: SCCM_Library.ps1
+        uses: charchess/SCCM_Library@master
       - name: Perform a validation of class IPAddress file
         shell: pwsh
         run: |
