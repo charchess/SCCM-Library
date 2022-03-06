@@ -1,0 +1,12 @@
+name: Test PowerShell on Ubuntu
+on: push
+
+jobs:
+  IPAddress-testing:
+    name: IPAddress class testing
+    runs-on: ubuntu-latest
+    steps:
+      - name: Perform a validation of class IPAddress file
+        shell: pwsh
+        run: |
+          Invoke-Pester -PassThru
