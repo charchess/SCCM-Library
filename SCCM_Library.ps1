@@ -523,10 +523,10 @@ Class IPRanges : System.IComparable
 function deploy-NewDistributionPoint
 {
     Param(
-        $SiteCode = 'B06',
-        $DistributionPoint = 'NZAKLSCCM001.AS.DIR.GRPLEG.COM',
-        $PXEpass="dellgrpleg",
-        $City="Auckland"
+        $SiteCode = 'A00',
+        $DistributionPoint = 'DP.FQDN',
+        $PXEpass="password",
+        $City="Somewhere"
         )
     
     $Domain = ($DistributionPoint.Split('.'))[1]
