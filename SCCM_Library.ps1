@@ -460,7 +460,7 @@ Class IPRanges : System.IComparable
                 {
                     continue
                 }
-                if($this.Ranges[$i].Merge($this.Ranges[$j]))
+                if(($null -ne $this.Ranges[$i]) -and ($this.Ranges[$i].Merge($this.Ranges[$j])))
                 {
                     $this.Ranges.removeat($j)
                 }
@@ -1146,9 +1146,8 @@ function import-csv2boundaries-newversion
         [parameter(Mandatory=$false)][string] $filter="",
         [parameter(Mandatory=$false)][string] $LogFile 
     )
-    Write-Progress -Activity "importing $filepath"
+#    Write-Progress -Activity "importing $filepath"
     $ADSubnets=Import-Csv -Path $filepath -Delimiter "`t" | Where-Object {$_.Site -match "$filter"}
-    $count=0
     Log -message "-------------------------------------------`n<Info> Starting new import. ($(get-date)) filter : $filter, lines : $($ADSubnets.count)" -LogFile $LogFile 
 
 
@@ -1156,50 +1155,56 @@ function import-csv2boundaries-newversion
     
     foreach($ADSite in $ADSites)
     {
-        if(-not-($ADSite -match '^CN=((..-[^,]*)),.*$'))
+        if(-not-($ADSite -match '^CN=((..)-([^,]*)),.*$'))
         {
             Log -message "<ERROR> Could not work with $ADSite" -LogFile $LogFile
             continue
         }
-        Log -message "(Info) working on $BoundaryName"
+        Log -message "(Info) working on $ADSite" -LogFile $LogFile
         $ADSiteName=$matches[1]
         $country=$matches[2]
         $sitename=$matches[3]
         $BoundaryName="$($country)-IPR_$($sitename)"
+        Log -message "(Info) Trying to guess SiteCode for $country" -LogFile $LogFile
         if(-not($sitecode=identify-MostProbableSiteCode -CountryCode $country -MinScore 90))
         {
             Log -message "<ERROR> Could not guess SiteCode for $country" -LogFile $LogFile
         }
+        Log -message "(Info) Guessed SiteCode for $country is $sitecode" -LogFile $LogFile
         
         $IPRanges2Add=[IPRanges]::new()
         # on créer une collection de tous les subnets du site
         foreach($ADSubnet in $ADSubnets | where-object {$_.Site -match $ADSiteName})
         {
+            Log -message "(Debug) Adding $($ADSubnet.Name) for $($BoundaryName) -> $($IPRAnges2Add)" -LogFile $LogFile
             $IPRanges2Add.AddRange($ADSubnet.Name)
         }
+        Log -message "(Debug) Working on $BoundaryName" -LogFile $LogFile
 
         # on cherche les boundaries existantes qui correspondent au meme boundaryname et on les ajoute à nos range cible
         foreach($CMBoundary in (Get-CMBoundary | where-object {($_.boundarytype -eq 3) -and ($_.DisplayName -match $BoundaryName)}))
         {
+            Log -message "(Debug) Adding $($CMBoundary.Value) to current scope"
             $IPRanges2Add.AddRange($CMBoundary.Value)
         }
 
+        $IPRanges2Remove=[IPRanges]::new()
         # on cherche les conflits existants avec ces subnets dans SCCM
-        foreach($IPRange in $IPRanges2Add.Ranges)
+        foreach($IPRange in ($IPRanges2Add.Ranges))
         {
-            Log -message "(Info) working on $IPRange"
+            Log -message "(Info) working on $IPRange" -LogFile $LogFile
             $Conflicts=find-CMIPRange -IPRange $IPRange
             foreach($Conflict in $Conflicts)
             {
                 if($Conflict.BoundaryName -ne $BoundaryName)
                 {
                     # Le subnet conflictuel est etranger, donc on s'adapte en reduisant notre cible
-                    $IPRanges2Add.RemoveRange($Conflict.IPRange)
+                    $IPRanges2Remove.AddRange($Conflict.IPRange)
                 } 
                 else
                 {
                     # Le subnet conflictuel est dans notre cible donc on le supprime
-                    Log -message "(Info) Removing IPRange $($Conflict.BoundaryName) : $($Conflict.IPRange)"
+                    Log -message "(Info) Removing IPRange $($Conflict.BoundaryName) : $($Conflict.IPRange)" -LogFile $LogFile
                     if($BoundaryToRemove=Get-CMBoundary | where-object {($_.Value -match $conflict.IPrange) -and ($_.DisplayName -match $Conflict.BoundaryName)})
                     {  
                         if($BoundaryToRemove.count -ge 5)
@@ -1214,11 +1219,17 @@ function import-csv2boundaries-newversion
                     }
                 }
             }
-            # finalement on ajoute la Range nettoyée
-            Log -message "(Info) Adding IPRange $($Conflict.BoundaryName) : $($Conflict.IPRange)"
-#            New-IPRBoundary -IPRange $IPRange -Country $Country -SiteName $sitename -SiteCode $sitecode
         }
+        # on nettoie la range cible des range à supprimer
+        foreach($IPRange in ($IPRanges2Remove.Ranges))
+        {
+            Log -message "(Debug) Removing $IPRange from the target scope" -LogFile $LogFile
+            $IPRanges2Add.RemoveRange($IPRange)
+        }
+
+        # finalement on ajoute la Range nettoyée
+        Log -message "(Info) Adding IPRange $($Conflict.BoundaryName) : $($Conflict.IPRange)" -LogFile $LogFile
+#            New-IPRBoundary -IPRange $IPRange -Country $Country -SiteName $sitename -SiteCode $sitecode
     }
 }
 
-# import-csv2boundaries-newversion -FilePath .\adsubnets.csv
