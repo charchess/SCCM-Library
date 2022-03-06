@@ -1,3 +1,4 @@
+
 class IP : System.IComparable
 {
     hidden static $_maskType = 
@@ -686,7 +687,7 @@ function deploy-NewDistributionPoint
     Add-CMBoundaryToGroup  -InputObject $CMBoundary -BoundaryGroupName "BG-Site-$SiteCode"
 }
 
-function check-alloverlaping
+function find-alloverlaping
 {
     [cmdletbinding()]
 
@@ -694,14 +695,14 @@ function check-alloverlaping
 
     foreach($CMboundary in $CMBoundaries)
     {
-        if($text=check-overlaping -IPBoundary $CMBoundary.value -ignorePerfectMatch)
+        if($text=find-overlaping -IPBoundary $CMBoundary.value -ignorePerfectMatch)
         {
             "$($CMboundary.DisplayName) ( $($CMboundary.Value) ) $($text.match) $($text.BoundaryName) ($($text.IPRange))"
         }        
     }
 }
 
-function check-overlaping
+function find-overlaping
 {
     [cmdletbinding()]
 
@@ -839,7 +840,7 @@ function monitor
     }
 }
 
-function identify-MostProbableSiteCode
+function Guess-MostProbableSiteCode
 {
     [cmdletbinding()]
 
@@ -884,7 +885,7 @@ function New-IPRBoundary
 
     if(-not($SiteCode))
     {
-        $BGSite=identify-MostProbableSiteCode -CountryCode $Country -MinScore 90
+        $BGSite=Guess-MostProbableSiteCode -CountryCode $Country -MinScore 90
     } else {
         $BGSite="$SiteCode"
     }
@@ -915,17 +916,29 @@ function Log
 {
     Param(
         [Parameter(Mandatory=$true)][string] $message,
-        [Parameter(Mandatory=$false)][string] $LogFile
+        [Parameter(Mandatory=$false)][string] $LogFile,
+        [Parameter(Mandatory=$false)][string] $Level="INFO"
     )
-    if($LogFile)
+    switch($Global:DebugLevel)
     {
-        $message | Out-File -Append -FilePath $LogFile
+        4 {$filter="(ERROR|WARNING|INFO|DEBUG)"}
+        3 {$filter="(ERROR|WARNING|INFO)"}
+        2 {$filter="(ERROR|WARNING)"}
+        1 {$filter="(ERROR|)"}
+        0 {$filter="(ERROR|WARNING|INFO)"}
+        default {$filter=""}
     }
-    else
+    if($Level -match $filter)
     {
-        write-host $message
+        if($LogFile)
+        {
+            "($Level) $message" | Out-File -Append -FilePath $LogFile
+        }
+        else
+        {
+            write-host "($Level) $message)"
+        }
     }
-
 }
 
 function backup-boundaries
@@ -949,173 +962,6 @@ function restore-boundaries
     # Import-CSV -Path $filePath | ForEach-Object { New-CMBoundary -Name $_.DisplayName -Type $_.BoundaryType -Value $_.Value }
 }
 
-function replace-IPRangeBoundary
-{
-    Param(
-        [Parameter(Mandatory=$true)][string] $IPRangeSource,
-        [Parameter(Mandatory=$true)][string] $IPRangeTarget,
-        [Parameter(Mandatory=$true)][string] $BoundaryName,
-        [Parameter(Mandatory=$false)][switch] $force,
-        [Parameter(Mandatory=$false)][string] $LogFile
-    )
-    # nom de la boundary, pas d'autre boundary exotique écrasée
-    # on compte les boundaries exotiques (celles qui ne matchent pas le nom de boundary que l'on veut ajouter)
-    $overlaps=check-overlaping -IPBoundary ($IPRangeTarget)
-    $exoticBoundaryNameCount=0
-    $exoticBoundaryName=""
-    $coveredRange=[IPRanges]::new()
-    foreach($o in $overlaps)
-    {
-        $coveredRange.AddRange($o.IPRange) 
-        if($o.BoundaryName -notmatch $BoundaryName)
-        {
-            $exoticBoundaryNameCount++
-            $exoticBoundaryName+="$($o.BoundaryName) "
-        }
-    }
-    # TBD: etre plus explicite (est ce que les ranges existantes couvrent intégralement la range cible)
-    if(($exoticBoundaryNameCount -eq 0) -or $force)
-    {
-        # si il n'y a pas de boundary exotique alors on étend la range
-        Log -message "<Info> Replacing $IPRangeSource with $IPRangeTarget for $BoundaryName" -LogFile $LogFile
-
-        # on compte quand meme les boundaries présente et bloquante (similaire du coup à ce que l'on deploit)
-        $CMBoundary=Get-CMBoundary | where-object {($_.Value -match $IPRangeSource) -and ($_.DisplayName -match $BoundaryName)}
-        if($BoundaryToRemove=Get-CMBoundary | where-object {($_.Value -match $IPRangeTarget) -and ($_.DisplayName -match $BoundaryName)})
-        {  
-            Log -message "<Info> Target range $IPRangeTarget already exist, extending $IPRangeSource - $BoundaryName" -LogFile $LogFile
-            foreach($b in $BoundaryToRemove)
-            {
-                Log -message "<Info> Removing boundary $($b.DisplayName) - $($b.Value)" -LogFile $LogFile
-                $b | Remove-CMBoundary -force
-            }
-        }
-
-        $CMBoundary | Set-CMBoundary -NewValue $IPRangeTarget
-    }
-    else
-    {
-        # couvrir les "trous" avec la range en cours
-        # absorber les ranges de meme nom
-        # coveredRange contient les range couvertes par les exotique
-        $Coverage=$coveredRange.isCovering($IPRangeTarget)
-        if($Coverage)
-        {
-            Log -message "<Info> $exoticBoundaryNameCount boundaries ($exoticBoundaryName) not matching $BoundaryName are already present in the range $IPRangeTarget range covered : $coveredRange" -LogFile $LogFile
-        }
-        else
-        {
-            Log -message "<Warning> $exoticBoundaryNameCount boundaries ($exoticBoundaryName) not matching $BoundaryName are already present in the range $IPRangeTarget range covered : $coveredRange" -LogFile $LogFile
-            # la on a des trous, on ne peut pas etendre autant qu'on veut à cause de boundary conflictuelles
-            foreach($o in $overlaps)
-            {
-                if($o.BoundaryName -ne $BoundaryName)
-                {
-                    $coveredRange.RemoveRange($o.IPRange)
-                }
-            }
-            foreach($b in ($coveredRange.Ranges))
-            {
-                Log -message "(Debug) adding $b to $BoundaryName" -LogFile $LogFile
-            }
-        }
-    }
-}
-
-
-function import-csv2boundaries
-{
-    [cmdletbinding()]
-
-    param(
-        [parameter(Mandatory=$false)][string] $filePath="$env:USERPROFILE\Documents\export_subnets.csv",
-        [parameter(Mandatory=$false)][string] $filter="",
-        [parameter(Mandatory=$false)][string] $LogFile 
-    )
-    Write-Progress -Activity "importing $filepath"
-    $ADSubnets=Import-Csv -Path $filepath -Delimiter "`t" | Where-Object {$_.Site -match "$filter"}
-    $count=0
-    Log -message "-------------------------------------------`n<Info> Starting new import. ($(get-date)) filter : $filter, lines : $($ADSubnets.count)" -LogFile $LogFile 
-
-    foreach($ADSubnet in ($ADSubnets))
-    {
-        # TBD: ajouter des infos d'action (creation/replace) dans la barre de progression
-        write-progress -Activity "Importing subnet : $IPRange ($((100*[math]::round($count/($ADSubnets.count), 2)))%)" -PercentComplete (100*[math]::round($count/$ADSubnets.count, 4)) -Status "checking"
-        $count++
-
-        $IPRange=[IPRange] ($ADSubnet.Name)
-        $country=($ADSubnet.Site).Substring(0, ($ADSubnet.Site.IndexOf(","))).remove(0,3).Substring(0,2)
-        $Name=($ADSubnet.Site).Substring(0, ($ADSubnet.Site.IndexOf(","))).remove(0,6)
-        $BoundaryName="$($country)-IPR_$($Name)"
-
-        # check existence in SCCM
-        $overlap=check-overlaping -IPBoundary ($IPRange.ToString())
-        if(-not($overlap))
-        {
-            Log -message "<Info> NONE: creating range $IPRange on $BoundaryName" -LogFile $LogFile
-            New-IPRBoundary -IPRange $IPRange -Country $country -SiteName $Name
-        } else {
-            foreach($o in $overlap)
-            {
-                write-verbose "$($o.match) $IPRange $($o.IPRange) $($o.BoundaryName)"
-                switch($o.match)
-                {
-                # on est a priori bon, reste a check les boundary quand on veut remplacer/etendre
-                    "INCLUDED" 
-                    {
-                        # la range proposée est incluse dans une range existente, rien à faire
-                        write-verbose " $IPRange is covered by $($o.IPRange) - $($o.BoundaryName)" 
-                        if($o.BoundaryName -ne $BoundaryName)
-                        {
-                            Log -message "<Info> Boundary $IPRange is already covered by a different Boundary : $($o.BoundaryName) ($($o.IPRange))" -LogFile $LogFile
-                        }
-                    }
-                    "COVERED" 
-                    {
-                        # La range proposée inclus une range existante dans SCCM
-                        # vérifier que la range existante est cohérente (nom de la range)
-                        # vérifier que le supernet ne couvre pas d'autres range incompatible
-                        # galère
-                        replace-IPRangeBoundary -IPRangeSource $o.IPRange -IPRangeTarget ($IPRange + $o.IPRange) -BoundaryName "$BoundaryName" -LogFile $LogFile
-                    }
-                    "OVERLAP" 
-                    { 
-                        # vérifier la cohérence de l'overlap avant de l'etendre 
-                        # nom de la boundary, pas d'autre boundary exotique incluse
-                        replace-IPRangeBoundary -IPRangeSource $o.IPRange -IPRangeTarget ($IPRange + $o.IPRange) -BoundaryName "$BoundaryName" -LogFile $LogFile
-                    }
-                    "TOUCHING" 
-                    {
-                        # vérifier la cohérence de l'overlap avant de l'etendre 
-                        # nom de la boundary, pas d'autre boundary exotique écrasée
-                        if($i.BoundaryName -eq $BoundaryName)
-                        {
-                            replace-IPRangeBoundary -IPRangeSource $o.IPRange -IPRangeTarget ($IPRange + $o.IPRange) -BoundaryName "$BoundaryName" -LogFile $LogFile
-                        }
-                        else
-                        {
-                            Log -message "(DEBUG) Touching subnet $IPRange ($BoundaryName) -> $($o.IPRange) ($($o.BoundaryName))" -LogFile $LogFile
-                        }
-                    }
-                    "PERFECT_MATCH" 
-                    { 
-                        # une range identique existe, vérifier la cohérence du nom
-                        write-verbose "<Info> PERFECT_MATCH, do nothing ($IPRange)" 
-                        if($o.BoundaryName -ne $BoundaryName)
-                        {
-                            Log -message "<Info> Boundary $($o.IPRange) already exist with a different Name : $($o.BoundaryName)" -LogFile $LogFile
-                        }
-                    }
-                    default 
-                    {
-                        Log -message "(ERROR) erreur : $($o.match)" -LogFile $LogFile
-                    }
-                }
-            }
-        }
-    }
-}
-
 function find-CMIPRange
 {
     [cmdletbinding()]
@@ -1137,7 +983,7 @@ function find-CMIPRange
     }
     return $Found
 }
-function import-csv2boundaries-newversion
+function import-csv2boundaries
 {
     [cmdletbinding()]
 
@@ -1148,7 +994,8 @@ function import-csv2boundaries-newversion
     )
 #    Write-Progress -Activity "importing $filepath"
     $ADSubnets=Import-Csv -Path $filepath -Delimiter "`t" | Where-Object {$_.Site -match "$filter"}
-    Log -message "-------------------------------------------`n<Info> Starting new import. ($(get-date)) filter : $filter, lines : $($ADSubnets.count)" -LogFile $LogFile 
+    Log -message "-------------------------------------------`n" -LogFile $LogFile
+    Log -message "Starting new import. ($(get-date)) filter : $filter, lines : $($ADSubnets.count)" -Level "INFO" -LogFile $LogFile 
 
 
     $ADSites=$ADSubnets.Site | Sort-object -unique
@@ -1157,34 +1004,34 @@ function import-csv2boundaries-newversion
     {
         if(-not-($ADSite -match '^CN=((..)-([^,]*)),.*$'))
         {
-            Log -message "<ERROR> Could not work with $ADSite" -LogFile $LogFile
+            Log -message "Could not work with $ADSite" -Level "ERROR" -LogFile $LogFile
             continue
         }
-        Log -message "(Info) working on $ADSite" -LogFile $LogFile
+        Log -message "Working on $ADSite" -Level "INFO" -LogFile $LogFile
         $ADSiteName=$matches[1]
         $country=$matches[2]
         $sitename=$matches[3]
         $BoundaryName="$($country)-IPR_$($sitename)"
-        Log -message "(Info) Trying to guess SiteCode for $country" -LogFile $LogFile
-        if(-not($sitecode=identify-MostProbableSiteCode -CountryCode $country -MinScore 90))
+        Log -message "Trying to guess SiteCode for $country" -Level "INFO" -LogFile $LogFile
+        if(-not($sitecode=Guess-MostProbableSiteCode -CountryCode $country -MinScore 90))
         {
-            Log -message "<ERROR> Could not guess SiteCode for $country" -LogFile $LogFile
+            Log -message "Could not guess SiteCode for $country" -Level "ERROR"-LogFile $LogFile
         }
-        Log -message "(Info) Guessed SiteCode for $country is $sitecode" -LogFile $LogFile
+        Log -message "Guessed SiteCode for $country is $sitecode" -Level "INFO"-LogFile $LogFile
         
         $IPRanges2Add=[IPRanges]::new()
         # on créer une collection de tous les subnets du site
         foreach($ADSubnet in $ADSubnets | where-object {$_.Site -match $ADSiteName})
         {
-            Log -message "(Debug) Adding $($ADSubnet.Name) for $($BoundaryName) -> $($IPRAnges2Add)" -LogFile $LogFile
+            Log -message "Adding $($ADSubnet.Name) for $($BoundaryName) -> $($IPRAnges2Add)" -Level "DEBUG" -LogFile $LogFile
             $IPRanges2Add.AddRange($ADSubnet.Name)
         }
-        Log -message "(Debug) Working on $BoundaryName" -LogFile $LogFile
+        Log -message "Working on $BoundaryName" -Level "DEBUG" -LogFile $LogFile
 
         # on cherche les boundaries existantes qui correspondent au meme boundaryname et on les ajoute à nos range cible
         foreach($CMBoundary in (Get-CMBoundary | where-object {($_.boundarytype -eq 3) -and ($_.DisplayName -match $BoundaryName)}))
         {
-            Log -message "(Debug) Adding $($CMBoundary.Value) to current scope"
+            Log -message "Adding $($CMBoundary.Value) to current scope" -Level "DEBUG" -LogFile $LogFile
             $IPRanges2Add.AddRange($CMBoundary.Value)
         }
 
@@ -1192,7 +1039,7 @@ function import-csv2boundaries-newversion
         # on cherche les conflits existants avec ces subnets dans SCCM
         foreach($IPRange in ($IPRanges2Add.Ranges))
         {
-            Log -message "(Info) working on $IPRange" -LogFile $LogFile
+            Log -message "Working on $IPRange" -Level "INFO" -LogFile $LogFile
             $Conflicts=find-CMIPRange -IPRange $IPRange
             foreach($Conflict in $Conflicts)
             {
@@ -1204,17 +1051,17 @@ function import-csv2boundaries-newversion
                 else
                 {
                     # Le subnet conflictuel est dans notre cible donc on le supprime
-                    Log -message "(Info) Removing IPRange $($Conflict.BoundaryName) : $($Conflict.IPRange)" -LogFile $LogFile
+                    Log -message "Removing IPRange $($Conflict.BoundaryName) : $($Conflict.IPRange)" -Level "INFO" -LogFile $LogFile
                     if($BoundaryToRemove=Get-CMBoundary | where-object {($_.Value -match $conflict.IPrange) -and ($_.DisplayName -match $Conflict.BoundaryName)})
                     {  
                         if($BoundaryToRemove.count -ge 5)
                         {
-                            throw("we are supposed to remove more than 5 IPRange, that's REALLY suspicious")
+                            throw("we are supposed to remove more than 5 IPRange, that`'s REALLY suspicious")
                         }
                         foreach($b in $BoundaryToRemove)
                         {
-                            Log -message "<Info> Removing boundary $($b.DisplayName) - $($b.Value)" -LogFile $LogFile
-#                            $b | Remove-CMBoundary -force
+                            Log -message "Removing boundary $($b.DisplayName) - $($b.Value)" -Level "DEBUG" -LogFile $LogFile
+                            $b | Remove-CMBoundary -force
                         }
                     }
                 }
@@ -1223,13 +1070,20 @@ function import-csv2boundaries-newversion
         # on nettoie la range cible des range à supprimer
         foreach($IPRange in ($IPRanges2Remove.Ranges))
         {
-            Log -message "(Debug) Removing $IPRange from the target scope" -LogFile $LogFile
-            $IPRanges2Add.RemoveRange($IPRange)
+            if($null -ne $IPRange)
+            {
+                Log -message "Removing $IPRange from the target scope" -Level "DEBUG"-LogFile $LogFile
+                $IPRanges2Add.RemoveRange($IPRange)
+            }
         }
-
-        # finalement on ajoute la Range nettoyée
-        Log -message "(Info) Adding IPRange $($Conflict.BoundaryName) : $($Conflict.IPRange)" -LogFile $LogFile
-#            New-IPRBoundary -IPRange $IPRange -Country $Country -SiteName $sitename -SiteCode $sitecode
+        Log -message "IPRanges to add : $IPRanges2Add" -Level "INFO" -LogFile $LogFile
+        foreach($IPRange in ($IPRanges2Add.Ranges))
+        {
+            # finalement on ajoute la Range nettoyée
+            Log -message "Adding IPRange $($BoundaryName) : $($IPRange)" -Level "DEBUG"-LogFile $LogFile
+            New-IPRBoundary -IPRange $IPRange -Country $Country -SiteName $sitename -SiteCode $sitecode
+        }
     }
+    Log -message "End of Script" -Level "INFO" -LogFile $LogFile
 }
 
