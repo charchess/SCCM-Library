@@ -723,7 +723,7 @@ function check-overlaping
 
         if(($result=$IPBoundary.Compare([IPRange] ($existingIPBoundary.value))) -ne "NONE")
         {
-            if((-not($ignorePErfectMatch) -or $result -ne "PERFECT_MATCH")
+            if((-not($ignorePErfectMatch) -or $result -ne "PERFECT_MATCH"))
             {
                 if(-not($noExtending) -or $result -ne "EXTENDING")
                 {
@@ -1215,4 +1215,4 @@ function import-csv2boundaries-newversion
     }
 }
 
-import-csv2boundaries-newversion -FilePath .\adsubnets.csv
+# import-csv2boundaries-newversion -FilePath .\adsubnets.csv
