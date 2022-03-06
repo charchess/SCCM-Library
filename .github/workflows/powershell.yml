@@ -6,8 +6,6 @@ jobs:
     name: IPAddress class testing
     runs-on: ubuntu-latest
     steps:
-      - name: Loading powershell
-        uses: charchess/SCCM-Library@master
       - name: Perform a validation of class IPAddress file
         shell: pwsh
         run: |
