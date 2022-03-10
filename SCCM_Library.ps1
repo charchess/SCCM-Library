@@ -654,7 +654,7 @@ function deploy-NewDistributionPoint
     }
 
     #Install Site System Server
-    if(-not($CMSiteSystemServer=Get-CMSiteSystemServer -AllSite | where {$_.NALPath -match "$DPShortName"}))
+    if(-not($CMSiteSystemServer=Get-CMSiteSystemServer -AllSite | Where-Object {$_.NALPath -match "$DPShortName"}))
     {
         "Creating $DistributionPoint on $SiteCode"
         $CMSiteSystemServer=New-CMSiteSystemServer -ServerName $DistributionPoint -SiteCode $SiteCode
@@ -820,12 +820,12 @@ function connect-SCCM
     # Do not change anything below this line
 
     # Import the ConfigurationManager.psd1 module 
-    if((Get-Module ConfigurationManager) -eq $null) {
+    if($null -eq (Get-Module ConfigurationManager)) {
         Import-Module "$($ENV:SMS_ADMIN_UI_PATH)\..\ConfigurationManager.psd1" @initParams 
     }
 
     # Connect to the site's drive if it is not already present
-    if((Get-PSDrive -Name $PrimarySiteCode -PSProvider CMSite -ErrorAction SilentlyContinue) -eq $null) {
+    if($null -eq (Get-PSDrive -Name $PrimarySiteCode -PSProvider CMSite -ErrorAction SilentlyContinue)) {
         New-PSDrive -Name $PrimarySiteCode -PSProvider CMSite -Root $ProviderMachineName @initParams
     }
 
@@ -844,13 +844,13 @@ function Retry-FailedPackages
 
     if ($FailedPackages)
     {
-        foreach ($FailedPackage in $FailedPackages | where {$_.ServerNALPath -match "$DP"})
+        foreach ($FailedPackage in $FailedPackages | where-object {$_.ServerNALPath -match "$DP"})
         {
             try
             {
                 $DistributionPointObj = Get-WmiObject -Namespace "root\SMS\Site_$($SiteCode)" -Class SMS_DistributionPoint -Filter "PackageID='$($FailedPackage.PackageID)' and ServerNALPath like '%$($FailedPackage.ServerNALPath.Substring(12,7))%'" -ComputerName INFFRPA3017
                 $DistributionPointObj.RefreshNow = $True
-                $result = $DistributionPointObj.Put()
+                $null = $DistributionPointObj.Put()
                 Write-Host "Refreshed $($FailedPackage.PackageID) on $($FailedPackage.ServerNALPath) - State was: $($FailedPackage.State)"
             }
             catch
@@ -958,10 +958,10 @@ function New-IPRBoundary
         Log -message "creating Boundary $IPRange in $BoundaryName" -Level "INFO" -LogFile $LogFile
         $CMBoundary=New-CMBoundary -Type IPRange -Value $IPRange -Name $BoundaryName
     }    
-    if(-not($CMBoundaryGroup=Get-CMBoundaryGroup -Name $BGName))
+    if(-not(Get-CMBoundaryGroup -Name $BGName))
     {
         Log -message "creating Boundary group $BGName" -Level "INFO" -LogFile $LogFile
-        $CMBoundaryGroup=New-CMBoundaryGroup -Name "$BGName"
+        $null=New-CMBoundaryGroup -Name "$BGName"
     }
 
     Log -message "adding $($CMBoundary.DisplayName) $($CMBoundary.Value) to $BGName, $BGSite and BG-SUP-default" -Level "INFO" -LogFile $LogFile
@@ -1034,7 +1034,7 @@ function find-CMIPRange
 
     foreach($CMBoundary in $CMBoundaries)
     {
-        switch -regex ($result=$IPRange.Compare([IPRange] ($CMBoundary.value)))
+        switch -regex ($IPRange.Compare([IPRange] ($CMBoundary.value)))
         {
             "(NONE|EXTENDING)" {}
             default {$null=$Found.Add(@{"BoundaryName"=$CMBoundary.DisplayName;"IPRange"=$CMBoundary.Value})}
