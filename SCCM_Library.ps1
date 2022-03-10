@@ -409,7 +409,6 @@ Class IPRanges : System.IComparable
     }
     RemoveRange ([IPRange] $IPRangeToRemove)
     {
-
         for($i = 0; $i -lt ($this.Ranges).Count; $i++)
         {
             if($IPRangeToRemove.IPStart.IPID -le $this.Ranges[$i].IPStart.IPID )
@@ -518,6 +517,63 @@ Class IPRanges : System.IComparable
             }
         }
         return $false
+    }
+}
+
+function get-ADGroupAllMembers
+{
+    Param(
+        [Parameter(Mandatory=$true)][string] $DN
+    )
+    [System.Collections.ArrayList] $Users = @()
+
+    $null=$DN -match '^.*?,((DC=.+)+)$'
+    $root=($matches[$matches.count-1]).replace("DC=","").replace(",",".")
+
+    $ADObject=get-adobject -Identity $DN -Server $root -ErrorAction SilentlyContinue
+    switch($ADObject.objectClass)
+    {
+        "group" 
+        {
+            $ADObjects=get-adobject -Identity $DN -Server $root -Properties member -ErrorAction SilentlyContinue
+            foreach($item in ($ADObjects.member))
+            {
+                $null=$Users+=(get-ADGroupAllMembers -DN $item)
+            }
+        }
+        "user" 
+        {
+            $Users+=$ADObject
+        }
+        default {write-host "Error with $DN $($ADObject.objectClass) $($ADObject.DistinguishedName)"}
+    }
+    return $Users
+}
+
+function Add-ComputerFromCollectionToADGroup
+{
+    Param(
+        [Parameter(Mandatory=$true)] $ADGroup,
+        [Parameter(Mandatory=$true)] $CollectionName
+    )    
+    foreach($d in Get-CMDevice -CollectionName $CollectionName)
+    {
+        # TBD : add some collection existence control
+        $sAMAccountName="$($d.Name)$"
+
+        # multidomain specifics
+        $server="$($d.domain).DIR.GRPLEG.COM"
+
+        if($null -eq ($ADComputer=Get-ADComputer -filter "sAMAccountName -eq '$sAMAccountName'" -Server $server))
+        {
+            "$sAMAccountName not found in AD"
+            continue
+        }
+        # TBD : add some already present in group check
+        if(Add-ADGroupMember -Identity $ADGroup -Members $ADComputer)
+        {
+            "Successfully added ($ADComputer) to $ADGroup"
+        }
     }
 }
 
@@ -880,7 +936,8 @@ function New-IPRBoundary
         [string][Parameter(Mandatory=$true)] $IPRange,
         [string][Parameter(Mandatory=$false)] $SiteCode,
         [string][Parameter(Mandatory=$true)] $Country,
-        [string][Parameter(Mandatory=$true)] $SiteName
+        [string][Parameter(Mandatory=$true)] $SiteName,
+        [string][Parameter(Mandatory=$false)] $LogFile="$env:userprofile\documents\boundaries.log"
     )
 
     if(-not($SiteCode))
@@ -896,19 +953,21 @@ function New-IPRBoundary
     }
     $BoundaryName="$country-IPR_$($SiteName)"
     $BGName="BG-Content-$Country-$SiteName"
-    if(-not($CMBoundary=Get-CMBoundary | Where-Object {((($_.BoundaryType -eq 3) -and ($_.Value -eq $IPRange)) -and $_.DisplayName -eq $BoundaryName)}))
+    if(-not($CMBoundary=Get-CMBoundary | Where-Object {((($_.BoundaryType -eq 3) -and ($_.Value -eq $IPRange)) -and ($_.DisplayName -eq $BoundaryName))}))
     {
+        Log -message "creating Boundary $IPRange in $BoundaryName" -Level "INFO" -LogFile $LogFile
         $CMBoundary=New-CMBoundary -Type IPRange -Value $IPRange -Name $BoundaryName
     }    
     if(-not($CMBoundaryGroup=Get-CMBoundaryGroup -Name $BGName))
     {
-        "creating Boundary group $BGName"
+        Log -message "creating Boundary group $BGName" -Level "INFO" -LogFile $LogFile
         $CMBoundaryGroup=New-CMBoundaryGroup -Name "$BGName"
     }
 
-    Add-CMBoundaryToGroup -BoundaryId ($cmboundary.BoundaryID) -BoundaryGroupName "$BGName"
-    Add-CMBoundaryToGroup -BoundaryId ($cmboundary.BoundaryID) -BoundaryGroupName "$BGSite"
-    Add-CMBoundaryToGroup -BoundaryId ($cmboundary.BoundaryID) -BoundaryGroupName "BG-SUP-Default"
+    Log -message "adding $($CMBoundary.DisplayName) $($CMBoundary.Value) to $BGName, $BGSite and BG-SUP-default" -Level "INFO" -LogFile $LogFile
+    Add-CMBoundaryToGroup -BoundaryId ($CMBoundary.BoundaryID) -BoundaryGroupName "$BGName"
+    Add-CMBoundaryToGroup -BoundaryId ($CMBoundary.BoundaryID) -BoundaryGroupName "$BGSite"
+    Add-CMBoundaryToGroup -BoundaryId ($CMBoundary.BoundaryID) -BoundaryGroupName "BG-SUP-Default"
 }
 
 
@@ -978,7 +1037,7 @@ function find-CMIPRange
         switch -regex ($result=$IPRange.Compare([IPRange] ($CMBoundary.value)))
         {
             "(NONE|EXTENDING)" {}
-            default {$Found.Add(@{"BoundaryName"=$CMBoundary.DisplayName;"IPRange"=$CMBoundary.Value})}
+            default {$null=$Found.Add(@{"BoundaryName"=$CMBoundary.DisplayName;"IPRange"=$CMBoundary.Value})}
         }
     }
     return $Found
@@ -1012,10 +1071,16 @@ function import-csv2boundaries
         $country=$matches[2]
         $sitename=$matches[3]
         $BoundaryName="$($country)-IPR_$($sitename)"
-        Log -message "Trying to guess SiteCode for $country" -Level "INFO" -LogFile $LogFile
+        Log -message "Trying to guess SiteCode for $country" -Level "DEBUG" -LogFile $LogFile
         if(-not($sitecode=Guess-MostProbableSiteCode -CountryCode $country -MinScore 90))
         {
             Log -message "Could not guess SiteCode for $country" -Level "ERROR"-LogFile $LogFile
+            if($country -eq "FR")
+            {
+                $SiteCode="B01"
+            } else {
+                continue
+            }
         }
         Log -message "Guessed SiteCode for $country is $sitecode" -Level "INFO"-LogFile $LogFile
         
@@ -1026,7 +1091,7 @@ function import-csv2boundaries
             Log -message "Adding $($ADSubnet.Name) for $($BoundaryName) -> $($IPRAnges2Add)" -Level "DEBUG" -LogFile $LogFile
             $IPRanges2Add.AddRange($ADSubnet.Name)
         }
-        Log -message "Working on $BoundaryName" -Level "DEBUG" -LogFile $LogFile
+        Log -message "Working on $BoundaryName" -Level "INFO" -LogFile $LogFile
 
         # on cherche les boundaries existantes qui correspondent au meme boundaryname et on les ajoute à nos range cible
         foreach($CMBoundary in (Get-CMBoundary | where-object {($_.boundarytype -eq 3) -and ($_.DisplayName -match $BoundaryName)}))
@@ -1039,7 +1104,7 @@ function import-csv2boundaries
         # on cherche les conflits existants avec ces subnets dans SCCM
         foreach($IPRange in ($IPRanges2Add.Ranges))
         {
-            Log -message "Working on $IPRange" -Level "INFO" -LogFile $LogFile
+            Log -message "Working on $IPRange" -Level "DEBUG" -LogFile $LogFile
             $Conflicts=find-CMIPRange -IPRange $IPRange
             foreach($Conflict in $Conflicts)
             {
@@ -1051,7 +1116,7 @@ function import-csv2boundaries
                 else
                 {
                     # Le subnet conflictuel est dans notre cible donc on le supprime
-                    Log -message "Removing IPRange $($Conflict.BoundaryName) : $($Conflict.IPRange)" -Level "INFO" -LogFile $LogFile
+                    Log -message "Removing IPRange $($Conflict.BoundaryName) : $($Conflict.IPRange)" -Level "DEBUG" -LogFile $LogFile
                     if($BoundaryToRemove=Get-CMBoundary | where-object {($_.Value -match $conflict.IPrange) -and ($_.DisplayName -match $Conflict.BoundaryName)})
                     {  
                         if($BoundaryToRemove.count -ge 5)
@@ -1060,7 +1125,7 @@ function import-csv2boundaries
                         }
                         foreach($b in $BoundaryToRemove)
                         {
-                            Log -message "Removing boundary $($b.DisplayName) - $($b.Value)" -Level "DEBUG" -LogFile $LogFile
+                            Log -message "Removing boundary $($b.DisplayName) - $($b.Value)" -Level "INFO" -LogFile $LogFile
                             $b | Remove-CMBoundary -force
                         }
                     }
@@ -1068,6 +1133,7 @@ function import-csv2boundaries
             }
         }
         # on nettoie la range cible des range à supprimer
+        Log -message "IPRange to remove from our target : $IPRanges2Remove" -Level "INFO" -LogFile $LogFile
         foreach($IPRange in ($IPRanges2Remove.Ranges))
         {
             if($null -ne $IPRange)
@@ -1076,7 +1142,7 @@ function import-csv2boundaries
                 $IPRanges2Add.RemoveRange($IPRange)
             }
         }
-        Log -message "IPRanges to add : $IPRanges2Add" -Level "INFO" -LogFile $LogFile
+        Log -message "IPRanges to add : $IPRanges2Add" -Level "DEBUG" -LogFile $LogFile
         foreach($IPRange in ($IPRanges2Add.Ranges))
         {
             # finalement on ajoute la Range nettoyée
