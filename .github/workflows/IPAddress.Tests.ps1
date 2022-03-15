@@ -30,6 +30,8 @@ Describe 'Check class IP is working as expected' {
     }
  }
 
+# TBD: no check for size
+# TBD : add overlapin method test
 Describe 'Check class IPRange is working as expected' {
     BeforeAll {
         Import-Module -Force $PSScriptRoot\..\..\SCCM_Library.ps1

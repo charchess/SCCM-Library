@@ -277,7 +277,7 @@ Class IPrange : System.IComparable
     {
         $this.IPStart=[IP] $StartIP
         $this.IPEnd=[IP] $EndIP
-        $this.size=$this.IPEndID - $this.IPStartID
+        $this.size=$this.IPEnd.IPID - $this.IPStart.IPID
     }
     IPRange ([string] $IPrange)
     {
@@ -297,7 +297,7 @@ Class IPrange : System.IComparable
             $this.IPStart=$IP.startIP
             $this.IPEnd=$IP.EndIP
         }
-        $this.size=$this.IPEndID.IPID - $this.IPStartID.IPID
+        $this.size=$this.IPEnd.IPID - $this.IPStart.IPID
     }
     IPRange ()
     {
@@ -518,6 +518,24 @@ Class IPRanges : System.IComparable
         }
         return $false
     }
+    [bool] isOverlaping([IPRange] $range)
+    {
+        foreach($r in $this.Ranges)
+        {
+            switch($err=$range.Compare($r))
+            {
+                "PERFECT_MATCH" {return $true}
+                "INCLUDED" {return $true}
+                "COVERED" {return $true}
+                "NONE" {return $false}
+                "OVERLAP" {return $true}
+                "EXTENDING" {return $false}
+                default {throw("error : $err")}
+            }
+        }
+        return $false
+    }
+
 }
 
 function get-ADGroupAllMembers
@@ -1042,6 +1060,7 @@ function find-CMIPRange
     }
     return $Found
 }
+
 function import-csv2boundaries
 {
     [cmdletbinding()]
