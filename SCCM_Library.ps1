@@ -860,11 +860,12 @@ function Retry-FailedPackages
         [string][Parameter(Mandatory=$false)] $PrimarySiteCode,
         [string][Parameter(Mandatory=$false)] $ProviderMachineName
     )
-    if(-not($PrimarySiteCode) -and -not($ProviderMachineName) -and -not($PSDrive=Get-PSDrive -PSProvider CMSite))
+    $PSDrive=Get-PSDrive -PSProvider CMSite
+    if(-not($PrimarySiteCode) -and -not($ProviderMachineName) -and -not($PSDrive))
     {
         throw("no PSDrive detected or set")
     } 
-    elseif(-not($PrimarySiteCode) -and -not($ProviderMachineName ))
+    elseif(-not($PrimarySiteCode) -or -not($ProviderMachineName))
     {
         $PrimarySiteCode=$PSDrive.Name
         $ProviderMachineName=$PSRdrive.root
@@ -873,6 +874,7 @@ function Retry-FailedPackages
     {
         connect-SCCM -ProviderMachineName $ProviderMachineName -PrimarySiteCode $PrimarySiteCode
     }
+
     $FailedPackages = Get-WmiObject -Namespace "Root\SMS\Site_$PrimarySiteCode" -Query "select * from SMS_PackageStatusDistPointsSummarizer where state = 3" -ComputerName $ProviderMachineName
 
     if ($FailedPackages)
