@@ -603,19 +603,23 @@ function deploy-NewDistributionPoint
         $PXEpass="password",
         $City="Somewhere"
         )
-    
+    # TBD: ajout de la gestion des pull DP
+    # TBD: Ajout de la description du DP (peut etre ajouter un tag d'identification du stage ? "distribution in progress")
+    # TBD: ajout et activation du dedupe
+
     $Domain = ($DistributionPoint.Split('.'))[1]
     $DPShortName = $($DistributionPoint.Split('.'))[0]
     $DPSamAccountName = $DPShortName + '$'
-    if($DPShortName.Substring(3) -like "INF")
+    if($DPShortName.Substring(0,3) -like "INF")
     {
         $country=$DPShortName.Substring(3,2)
     } else {
         $country=$DPShortName.Substring(0,2)
     }
-
+    connect-SCCM -PrimarySiteCode M01 -ProviderMachineName inffrpa3017.eu.dir.grpleg.com
 
     # prerequisite checks
+    # TBD: check sitecode is good
 
     # check machine up
     if(-not(Test-Connection -quiet -Count 1 -ComputerName $DistributionPoint))
@@ -708,8 +712,10 @@ function deploy-NewDistributionPoint
 
     # post install task
     # add DP to groups (all et OSD)
-    Add-CMDistributionPointToGroup -DistributionPoint $CMDistributionPoint -DistributionPointGroupName "All On-Premises Distribution Points"
-    Add-CMDistributionPointToGroup -DistributionPoint $CMDistributionPoint -DistributionPointGroupName "OSD_Win10_PROD_Distribution_Point_Group"
+    Start-Sleep -Seconds 60
+    "adding $DistributionPoint to content groups"
+    Add-CMDistributionPointToGroup -DistributionPointName $DistributionPoint -DistributionPointGroupName "All On-Premises Distribution Points"
+    Add-CMDistributionPointToGroup -DistributionPointName $DistributionPoint -DistributionPointGroupName "OSD_Win10_PROD_Distribution_Point_Group"
 
 
     # add or create boundary group
@@ -721,44 +727,28 @@ function deploy-NewDistributionPoint
     } else {
         "$BGName already exists"
     }
-
+    
     # check or create boundary / IPRange
 
     $IP=[IP] (Invoke-Command -ComputerName $DistributionPoint -ScriptBlock { (Get-NetIPAddress).where({$_.IPAddress -match "10\.\d+\.\d+\.\d+"}).IPAddress })
-    $prefixLength=(Invoke-Command -ComputerName $DistributionPoint -ScriptBlock { (Get-NetIPAddress).where({$_.IPAddress -match "10\.\d+\.\d+\.\d+"}).PrefixLength })
+    $IP.prefix=(Invoke-Command -ComputerName $DistributionPoint -ScriptBlock { (Get-NetIPAddress).where({$_.IPAddress -match "10\.\d+\.\d+\.\d+"}).PrefixLength })
 
 
-    # stolent from https://codeandkeep.com/PowerShell-Get-Subnet-NetworkID/
-    $bitString=('1' * $prefixLength).PadRight(32,'0')
-    $ipString=[String]::Empty
-    # make 1 string combining a string for each byte and convert to int
-    for($i=0;$i -lt 32;$i+=8){
-    $byteString=$bitString.Substring($i,8)
-    $ipString+="$([Convert]::ToInt32($byteString, 2))."
-    }
-    $mask=[IP] ($ipString.TrimEnd('.'))
-
-    # we reverse the mask (to get the host part)
-    $reverseMask=[IP] (-bnot([uint32]$mask.Address))
-
-    # we calculate the starting and ending IP
-    $startIP=[IP] ($IP.Address -band $mask.Address)
-    $endIP=[IP] ($IP.Address -bor $reversemask.Address)
-    $IPRange="$startIP-$endIP"
+    $IPRange="$($IP.startIP)-$($IP.EndIP)"
 
     $IPRName="$Country-IPR_$City"
     if(-not($CMBoundary=Get-CMBoundary -BoundaryName $IPRName))
     {
         "creating boundary $IPRName with range $IPRange for $DPShortName / $SiteCode"
-        New-CMBoundary -Name $IPRName -Type IPRange -Value $IPRange
+        $CMBoundary=New-CMBoundary -Name $IPRName -Type IPRange -Value $IPRange
     } else {
         "boundary $IPRName already exist with IPRange : $($CMBoundary.Value)"
     }
 
     # we add the proper BG to that boundary
-    Add-CMBoundaryToGroup  -InputObject $CMBoundary -BoundaryGroupInputObject $CMBoundaryGroup
-    Add-CMBoundaryToGroup  -InputObject $CMBoundary -BoundaryGroupName "BG-SUP-Default"
-    Add-CMBoundaryToGroup  -InputObject $CMBoundary -BoundaryGroupName "BG-Site-$SiteCode"
+    Add-CMBoundaryToGroup -InputObject $CMBoundary -BoundaryGroupInputObject $CMBoundaryGroup
+    Add-CMBoundaryToGroup -InputObject $CMBoundary -BoundaryGroupName "BG-SUP-Default"
+    Add-CMBoundaryToGroup -InputObject $CMBoundary -BoundaryGroupName "BG-Site-$SiteCode"
 }
 
 function find-alloverlaping
@@ -851,6 +841,22 @@ function connect-SCCM
     Set-Location "$($PrimarySiteCode):\" @initParams
 }
 
+function check-distribution
+{
+    [cmdletbinding()]
+
+    Param(
+        [string][Parameter(Mandatory=$true)] $DP,
+        [string][Parameter(Mandatory=$false)] $PrimarySiteCode,
+        [string][Parameter(Mandatory=$false)] $ProviderMachineName
+    )
+    $PackagesStatus = (Get-WmiObject -Namespace "Root\SMS\Site_$PrimarySiteCode" -Query "select * from SMS_PackageStatusDistPointsSummarizer where ServerNALPath like '%$DP%'" -ComputerName $ProviderMachineName | Group-Object -Property state)
+    "in progress : $((($PackagesStatus.where{$_.Name -eq 7})[0]).count)"
+    "retrying    : $((($PackagesStatus.where{$_.Name -eq 2})[0]).count)"
+    "failed      : $((($PackagesStatus.where{$_.Name -eq 3})[0]).count)"
+    "success     : $((($PackagesStatus.where{$_.Name -eq 0})[0]).count)"
+}
+
 function Retry-FailedPackages
 {
     [cmdletbinding()]
@@ -860,7 +866,7 @@ function Retry-FailedPackages
         [string][Parameter(Mandatory=$false)] $PrimarySiteCode,
         [string][Parameter(Mandatory=$false)] $ProviderMachineName
     )
-    $PSDrive=Get-PSDrive -PSProvider CMSite
+    $PSDrive=Get-PSDrive -PSProvider CMSite -ErrorAction SilentlyContinue
     if(-not($PrimarySiteCode) -and -not($ProviderMachineName) -and -not($PSDrive))
     {
         throw("no PSDrive detected or set")
@@ -1189,3 +1195,45 @@ function import-csv2boundaries
     Log -message "End of Script" -Level "INFO" -LogFile $LogFile
 }
 
+class SCCM 
+{
+    hidden [string] $PrimarySiteCode
+    hidden [string] $ProviderMachineName
+    SCCM ([string] $PrimarySiteCode, [string] $ProviderMachineName)
+    {
+        InitConnection($PrimarySiteCode, $ProviderMachineName)
+    }
+    InitConnection([string] $PrimarySiteCode, [string] $ProviderMachineName)
+    {
+        $this.PrimarySiteCode = $PrimarySiteCode        
+        $this.ProviderMachineName = $ProviderMachineName
+        #
+        # Press 'F5' to run this script. Running this script will load the ConfigurationManager
+        # module for Windows PowerShell and will connect to the site.
+        #
+        # This script was auto-generated at '12/15/2021 10:22:06 AM'.
+
+        # Site configuration
+
+        # Customizations
+        $initParams = @{}
+        #$initParams.Add("Verbose", $true) # Uncomment this line to enable verbose logging
+        #$initParams.Add("ErrorAction", "Stop") # Uncomment this line to stop the script on any errors
+
+        # Do not change anything below this line
+
+        # Import the ConfigurationManager.psd1 module 
+        if($null -eq (Get-Module ConfigurationManager)) {
+            Import-Module "$($ENV:SMS_ADMIN_UI_PATH)\..\ConfigurationManager.psd1" @initParams 
+        }
+
+        # Connect to the site's drive if it is not already present
+        if($null -eq (Get-PSDrive -Name $PrimarySiteCode -PSProvider CMSite -ErrorAction SilentlyContinue)) {
+            New-PSDrive -Name $PrimarySiteCode -PSProvider CMSite -Root $ProviderMachineName @initParams
+        }
+
+        # Set the current location to be the site code.
+        Set-Location "$($PrimarySiteCode):\" @initParams
+
+    }
+}
