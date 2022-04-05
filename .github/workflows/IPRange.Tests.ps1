@@ -1,24 +1,24 @@
-# TBD: no check for size
-# TBD : add overlapin method test
 Describe 'Check class IPRange is working as expected' {
+    # TBD: no check for size
+    # TBD : add overlapin method test
     BeforeAll {
-        Import-Module -Force $PSScriptRoot\..\..\SCCM_Library.ps1
-    }
+            Import-Module -Force $PSScriptRoot\..\..\SCCM_Library.ps1
+        }
     BeforeEach {
         $IP1=[IP] "11.0.0.1/8"
         $IP2=[IP] "10.0.0.1/255.255.255.0"
         $IP3=[IP] "192.168.0.0"
         $IPRA=[IPRange] "127.0.0.1/8"
-        $IPRB=[IPRange] "$IP2-$IP1"  # 10.0.0.0-11../          |===============|
-        $IPR0=[IPRange] "10.0.0.0-11.255.255.255"
-        $IPR1=[IPRange] "1.1.1.1/30"                # |====|
-        $IPR2=[IPRange] "9.0.0.0/8"                 #     |===]
-        $IPR3=[IPRange] "9.0.0.0-10.126.144.123"    #    |==========|
-        $IPR4=[IPRange] "11.128.0.0-11.200.0.0"     #               |======|
-        $IPR5=[IPRange] "10.255.255.255-13.5.5.5"   #                    |===========|
-        $IPR6=[IPRange] "12.0.0.0/8"              #                          [======|   
-        $IPR7=[IPRange] "192.168.0.0/24"            #                                       |=====|
-        $IPR8=[IPRange] "0.0.0.0-255.255.255.255"  #      |==========================|
+        $IPRB=[IPRange] "$IP2-$IP1"                 
+        $IPR0=[IPRange] "10.0.0.0-11.255.255.255"   # 10.0.0.0-11../|===============|
+        $IPR1=[IPRange] "1.1.1.1/30"                #    |====|
+        $IPR2=[IPRange] "9.0.0.0/8"                 #        |===]
+        $IPR3=[IPRange] "9.0.0.0-10.126.144.123"    #       |==========|
+        $IPR4=[IPRange] "11.128.0.0-11.200.0.0"     #                  |======|
+        $IPR5=[IPRange] "10.255.255.255-13.5.5.5"   #                       |===========|
+        $IPR6=[IPRange] "12.0.0.0/8"                #                             [======|   
+        $IPR7=[IPRange] "192.168.0.0/24"            #                                          |=====|
+        $IPR8=[IPRange] "0.0.0.0-255.255.255.255"   #         |==========================|
     }
     It 'Check IPRange creation - with prefix' {
         "$IPRA" | Should -Be "127.0.0.0-127.255.255.255"
