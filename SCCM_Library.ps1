@@ -271,7 +271,7 @@ Class IPrange : System.IComparable
 {
     [IP] $IPStart
     [IP] $IPEnd
-    [int] $size=0
+    [uint32] $size=0
 
     IPRange ([IP] $StartIP, [IP] $EndIP)
     {
