@@ -9,4 +9,4 @@ jobs:
       - name: Perform a validation of class IPAddress file
         shell: pwsh
         run: |
-          Get-location
+          Invoke-Pester -PassThru -Path /home/runner/work/SCCM-Library/SCCM-Library/
