@@ -8,5 +8,5 @@ jobs:
     steps:
       - name: Perform a validation of class IPAddress file
         shell: pwsh
-        run: |
+        run: *.tests.ps1 |
           Invoke-Pester -PassThru
