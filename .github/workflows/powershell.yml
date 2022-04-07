@@ -3,10 +3,10 @@ on: push
 
 jobs:
   IPAddress-testing:
-    name: IPAddress class testing
+    name: unit tests validation
     runs-on: ubuntu-latest
     steps:
       - name: Perform a validation of class IPAddress file
         shell: pwsh
-        run: *.tests.ps1 |
-          Invoke-Pester -PassThru
+        run: |
+          Get-location
