@@ -3,3 +3,4 @@ TestExplorerResults.xml
 .gitignore
 adsubnet.csv
 *.yml
+.*
