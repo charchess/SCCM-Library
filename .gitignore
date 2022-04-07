@@ -2,3 +2,4 @@ test.ps1
 TestExplorerResults.xml
 .gitignore
 adsubnet.csv
+*.yml
