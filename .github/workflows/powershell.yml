@@ -9,4 +9,4 @@ jobs:
       - name: Perform a validation of class IPAddress file
         shell: pwsh
         run: |
-          get-childitem -recurse -path (get-location)
+          get-childitem -recurse -path /home/runner/work/SCCM-Library -help
