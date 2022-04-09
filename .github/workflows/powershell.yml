@@ -9,5 +9,4 @@ jobs:
       - name: Perform a validation of class IPAddress file
         shell: pwsh
         run: |
-          get-location
           get-childitem -recurse
