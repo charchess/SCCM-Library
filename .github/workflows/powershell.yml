@@ -9,4 +9,5 @@ jobs:
       - name: Perform a validation of class IPAddress file
         shell: pwsh
         run: |
-          Invoke-Pester -PassThru -Path /home/runner/work/
+          get-location
+          get-childitem -recurse
