@@ -9,5 +9,5 @@ jobs:
       - name: Perform a validation of class IPAddress file
         shell: pwsh
         run: |
-          get-childitem -recurse -Path /home/runner/work/SCCM-Library/SCCM-Library
-        #  Invoke-Pester -PassThru -Path /home/runner/work/SCCM-Library/SCCM-Library/.github/workflows/IP.Tests.ps1
+        #  get-childitem -recurse -Path /home/runner/work/SCCM-Library/
+        Invoke-Pester -PassThru -Path /home/runner/work/SCCM-Library/.github/workflows/IP.Tests.ps1
