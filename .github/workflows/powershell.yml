@@ -9,4 +9,5 @@ jobs:
       - name: Perform a validation of class IPAddress file
         shell: pwsh
         run: |
+          Get-Location
           Invoke-Pester -Path ../.github/workflows/
