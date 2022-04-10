@@ -9,4 +9,4 @@ jobs:
       - name: Perform a validation of class IPAddress file
         shell: pwsh
         run: |
-          get-help get-childitem
+          Invoke-Pester -Path ./.github/workflows/
