@@ -10,6 +10,6 @@ jobs:
         run: |
           Set-PSRepository psgallery -InstallationPolicy trusted
           Install-Module -Name Pester -RequiredVersion 5.0.4 -Confirm:$false -Force
-          Invoke-Pester -Path "tests" -Passthru
-          if ($Error[0].Fullyqualifiederrorid -eq 'PesterAssertionFailed') {exit 1}
+          $pester=Invoke-Pester -Path "tests" -Passthru
+          if ($pester.Result -eq 'Failed') {exit 1}
         shell: pwsh
