@@ -1,6 +1,6 @@
 Describe 'Check class IPRanges is working as expected' {
     BeforeAll {
-        Import-Module -Force ..\SCCM_Library.ps1
+        Import-Module -Force .\SCCM_Library.ps1
     }
     BeforeEach {
         $IPR0=[IPRanges] "10.0.0.0-11.255.255.255"  #         |================|
