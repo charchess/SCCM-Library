@@ -2,7 +2,7 @@ Describe 'Check class IPRange is working as expected' {
     # TBD: no check for size
     # TBD : add overlapin method test
     BeforeAll {
-            Import-Module -Force $PSScriptRoot\..\..\SCCM_Library.ps1
+            Import-Module -Force ..\SCCM_Library.ps1
         }
     BeforeEach {
         $IP1=[IP] "11.0.0.1/8"
