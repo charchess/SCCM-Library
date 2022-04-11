@@ -1,4 +1,3 @@
-
 class IP : System.IComparable
 {
     hidden static $_maskType = 
