@@ -594,162 +594,6 @@ function Add-ComputerFromCollectionToADGroup
     }
 }
 
-function deploy-NewDistributionPoint
-{
-    Param(
-        $SiteCode = 'A00',
-        $DistributionPoint = 'DP.FQDN',
-        $PXEpass="password",
-        $City="Somewhere"
-        )
-    # TBD: ajout de la gestion des pull DP
-    # TBD: Ajout de la description du DP (peut etre ajouter un tag d'identification du stage ? "distribution in progress")
-    # TBD: ajout et activation du dedupe
-
-    $Domain = ($DistributionPoint.Split('.'))[1]
-    $DPShortName = $($DistributionPoint.Split('.'))[0]
-    $DPSamAccountName = $DPShortName + '$'
-    if($DPShortName.Substring(0,3) -like "INF")
-    {
-        $country=$DPShortName.Substring(3,2)
-    } else {
-        $country=$DPShortName.Substring(0,2)
-    }
-    connect-SCCM -PrimarySiteCode M01 -ProviderMachineName inffrpa3017.eu.dir.grpleg.com
-
-    # prerequisite checks
-    # TBD: check sitecode is good
-
-    # check machine up
-    if(-not(Test-Connection -quiet -Count 1 -ComputerName $DistributionPoint))
-    {
-        Write-host "$DistributionPoint is down"
-        break    
-    }
-
-    # check server sccm group admin local
-    $group2Add="EU\GUS-SCCM-Servers-Admins-$($Domain)"
-    if(-not(Invoke-Command -ComputerName $DistributionPoint -ScriptBlock{Get-LocalGroupMember -SID S-1-5-32-544 -Member $args[0] -ErrorAction SilentlyContinue} -ArgumentList $group2Add))
-    {
-        "Adding $group2add to local admin"
-        Invoke-Command -ComputerName $DistributionPoint -ScriptBlock {add-LocalGroupMember -SID S-1-5-32-544 -Member $args[0]} -ArgumentList $group2Add 
-    }
-
-    # check Primary is in local admin group
-    $computer2Add="EU\INFFRPA3017$"
-    if(-not(Invoke-Command -ComputerName $DistributionPoint -ScriptBlock{Get-LocalGroupMember -SID S-1-5-32-544 -Member $args[0] -ErrorAction SilentlyContinue} -ArgumentList $computer2Add))
-    {
-        "Adding $computer2Add to local admin"
-        Invoke-Command -ComputerName $DistributionPoint -ScriptBlock {add-LocalGroupMember -SID S-1-5-32-544 -Member $args[0]} -ArgumentList $computer2Add 
-    }
-
-    # check MP is in local admin group
-    if(-not($computer2Add=((Get-CMSite -SiteCode $SiteCode).ServerName.Split("."))[0]))
-    {
-        "couldn't find server for $SiteCode"
-        break
-    }
-
-    $computer2Add="$Domain\$computer2Add" + '$'
-    if(-not(Invoke-Command -ComputerName $DistributionPoint -ScriptBlock{Get-LocalGroupMember -SID S-1-5-32-544 -Member $args[0] -ErrorAction SilentlyContinue} -ArgumentList $computer2Add))
-    {
-        "Adding $computer2Add to local admin"
-        Invoke-Command -ComputerName $DistributionPoint -ScriptBlock {add-LocalGroupMember -SID S-1-5-32-544 -Member $args[0]} -ArgumentList $computer2Add 
-    }
-
-
-
-    # adding the computer object to the proper AD group
-    switch($Domain)
-    {
-        "AM" { $server="AM.DIR.GRPLEG.COM";$group="ADM-US-WES-SCCM-AllServers"}
-        "AS" { $server="AS.DIR.GRPLEG.COM";$group="ADM-AS-FRLGS-SCCM-AllServers"}
-        "EU" { $server="EU.DIR.GRPLEG.COM";$group="ADM-FRLGS-SCCM-AllServers"}
-        default {"cannot identify domain";break}
-    }
-
-    if(-not((Get-ADGroupMember -Server $server -Identity $group).Name.contains($DPShortName)))
-    {
-        "adding $DPShortName to $group on $server"
-        Add-ADGroupMember -server $server -Identity $group -Members $DPsamAccountName
-    }
-
-    #Install Site System Server
-    if(-not($CMSiteSystemServer=Get-CMSiteSystemServer -AllSite | Where-Object {$_.NALPath -match "$DPShortName"}))
-    {
-        "Creating $DistributionPoint on $SiteCode"
-        $CMSiteSystemServer=New-CMSiteSystemServer -ServerName $DistributionPoint -SiteCode $SiteCode
-    } else {
-        "$DistributionPoint is already a site system"
-    }
-
-    #Optional - Install SCCM IIS Base components
-    Invoke-Command -ComputerName $DistributionPoint -ScriptBlock {dism.exe /online /norestart /enable-feature /ignorecheck /featurename:"IIS-WebServerRole" /featurename:"IIS-WebServer" /featurename:"IIS-CommonHttpFeatures" /featurename:"IIS-StaticContent" /featurename:"IIS-DefaultDocument" /featurename:"IIS-DirectoryBrowsing" /featurename:"IIS-HttpErrors" /featurename:"IIS-HttpRedirect" /featurename:"IIS-WebServerManagementTools" /featurename:"IIS-IIS6ManagementCompatibility"  /featurename:"IIS-Metabase" /featurename:"IIS-WindowsAuthentication"  /featurename:"IIS-WMICompatibility"  /featurename:"IIS-ISAPIExtensions" /featurename:"IIS-ManagementScriptingTools" /featurename:"MSRDC-Infrastructure" /featurename:"IIS-ManagementService"}
-
-    #Install Distribution Point Role
-    write-host "The Distribution Point Role is being Installed on $DistributionPoint"
-    if(-not($CMDistributionPoint=Get-CMDistributionPoint -SiteSystemServerName $DistributionPoint -SiteCode $SiteCode))
-    {
-        "creating DP on $DistributionPoint"
-        $CMDistributionPoint=Add-CMDistributionPoint -CertificateExpirationTimeUtc ((get-date).addyears(5)) -SiteCode $SiteCode -SiteSystemServerName $DistributionPoint -MinimumFreeSpaceMB 1024 -ClientConnectionType 'Intranet' -PrimaryContentLibraryLocation Automatic -PrimaryPackageShareLocation Automatic -SecondaryContentLibraryLocation Automatic -SecondaryPackageShareLocation Automatic
-    } else {
-        "DP already created on $DistributionPoint"
-    }
-
-
-    #Define PXE Password
-    $PXEpass = convertto-securestring -string "password" -asplaintext -force
-
-    #Enable PXE, Unknown Computer Support, Client Communication Method
-    Set-CMDistributionPoint -SiteSystemServerName $DistributionPoint -SiteCode $SiteCode -EnablePxe $True -PXEpassword $PXEpass -PxeServerResponseDelaySeconds 0 -AllowPxeResponse $True -EnableUnknownComputerSupport $True -UserDeviceAffinity "AllowWithAutomaticApproval" -EnableContentValidation $True -ClientCommunicationType Http -EnableAnonymous $true -EnableBranchCache $true -EnableDoinc $true -DiskSpaceDoinc 50 -AgreeDoincLicense $true
-
-
-    #Enable Multicast Feature
-    # Add-CMMulticastServicePoint -SiteSystemServerName $DistributionPoint -SiteCode $SiteCode
-
-
-
-    # post install task
-    # add DP to groups (all et OSD)
-    Start-Sleep -Seconds 60
-    "adding $DistributionPoint to content groups"
-    Add-CMDistributionPointToGroup -DistributionPointName $DistributionPoint -DistributionPointGroupName "All On-Premises Distribution Points"
-    Add-CMDistributionPointToGroup -DistributionPointName $DistributionPoint -DistributionPointGroupName "OSD_Win10_PROD_Distribution_Point_Group"
-
-
-    # add or create boundary group
-    $BGName="BG-Content-$country-$city"
-    if(-not($CMBoundaryGroup=Get-CMBoundaryGroup -Name $BGName))
-    {
-        "Creating boundary group $BGName"
-        $CMBoundaryGroup=New-CMBoundaryGroup -AddSiteSystemServer $CMSiteSystemServer -Name $BGName
-    } else {
-        "$BGName already exists"
-    }
-    
-    # check or create boundary / IPRange
-
-    $IP=[IP] (Invoke-Command -ComputerName $DistributionPoint -ScriptBlock { (Get-NetIPAddress).where({$_.IPAddress -match "10\.\d+\.\d+\.\d+"}).IPAddress })
-    $IP.prefix=(Invoke-Command -ComputerName $DistributionPoint -ScriptBlock { (Get-NetIPAddress).where({$_.IPAddress -match "10\.\d+\.\d+\.\d+"}).PrefixLength })
-
-
-    $IPRange="$($IP.startIP)-$($IP.EndIP)"
-
-    $IPRName="$Country-IPR_$City"
-    if(-not($CMBoundary=Get-CMBoundary -BoundaryName $IPRName))
-    {
-        "creating boundary $IPRName with range $IPRange for $DPShortName / $SiteCode"
-        $CMBoundary=New-CMBoundary -Name $IPRName -Type IPRange -Value $IPRange
-    } else {
-        "boundary $IPRName already exist with IPRange : $($CMBoundary.Value)"
-    }
-
-    # we add the proper BG to that boundary
-    Add-CMBoundaryToGroup -InputObject $CMBoundary -BoundaryGroupInputObject $CMBoundaryGroup
-    Add-CMBoundaryToGroup -InputObject $CMBoundary -BoundaryGroupName "BG-SUP-Default"
-    Add-CMBoundaryToGroup -InputObject $CMBoundary -BoundaryGroupName "BG-Site-$SiteCode"
-}
-
 function find-alloverlaping
 {
     [cmdletbinding()]
@@ -840,68 +684,6 @@ function connect-SCCM
     Set-Location "$($PrimarySiteCode):\" @initParams
 }
 
-function check-distribution
-{
-    [cmdletbinding()]
-
-    Param(
-        [string][Parameter(Mandatory=$true)] $DP,
-        [string][Parameter(Mandatory=$false)] $PrimarySiteCode,
-        [string][Parameter(Mandatory=$false)] $ProviderMachineName
-    )
-    $PackagesStatus = (Get-WmiObject -Namespace "Root\SMS\Site_$PrimarySiteCode" -Query "select * from SMS_PackageStatusDistPointsSummarizer where ServerNALPath like '%$DP%'" -ComputerName $ProviderMachineName | Group-Object -Property state)
-    "in progress : $((($PackagesStatus.where{$_.Name -eq 7})[0]).count)"
-    "retrying    : $((($PackagesStatus.where{$_.Name -eq 2})[0]).count)"
-    "failed      : $((($PackagesStatus.where{$_.Name -eq 3})[0]).count)"
-    "success     : $((($PackagesStatus.where{$_.Name -eq 0})[0]).count)"
-}
-
-function Retry-FailedPackages
-{
-    [cmdletbinding()]
-
-    Param(
-        [string][Parameter(Mandatory=$true)] $DP,
-        [string][Parameter(Mandatory=$false)] $PrimarySiteCode,
-        [string][Parameter(Mandatory=$false)] $ProviderMachineName
-    )
-    $PSDrive=Get-PSDrive -PSProvider CMSite -ErrorAction SilentlyContinue
-    if(-not($PrimarySiteCode) -and -not($ProviderMachineName) -and -not($PSDrive))
-    {
-        throw("no PSDrive detected or set")
-    } 
-    elseif(-not($PrimarySiteCode) -or -not($ProviderMachineName))
-    {
-        $PrimarySiteCode=$PSDrive.Name
-        $ProviderMachineName=$PSRdrive.root
-    } 
-    else 
-    {
-        connect-SCCM -ProviderMachineName $ProviderMachineName -PrimarySiteCode $PrimarySiteCode
-    }
-
-    $FailedPackages = Get-WmiObject -Namespace "Root\SMS\Site_$PrimarySiteCode" -Query "select * from SMS_PackageStatusDistPointsSummarizer where state = 3" -ComputerName $ProviderMachineName
-
-    if ($FailedPackages)
-    {
-        foreach ($FailedPackage in $FailedPackages | where-object {$_.ServerNALPath -match "$DP"})
-        {
-            try
-            {
-                $DistributionPointObj = Get-WmiObject -Namespace "root\SMS\Site_$($SiteCode)" -Class SMS_DistributionPoint -Filter "PackageID='$($FailedPackage.PackageID)' and ServerNALPath like '%$($FailedPackage.ServerNALPath.Substring(12,7))%'" -ComputerName INFFRPA3017
-                $DistributionPointObj.RefreshNow = $True
-                $null = $DistributionPointObj.Put()
-                Write-Host "Refreshed $($FailedPackage.PackageID) on $($FailedPackage.ServerNALPath) - State was: $($FailedPackage.State)"
-            }
-            catch
-            {
-                Write-Host "Unable to refresh package $($FailedPackage.PackageID) on $($FailedPackage.ServerNALPath.Substring(12,7)) - State was: $($FailedPackage.State)"
-                write-host $Error
-            }
-        }
-    }
-}
-
 function monitor
 {
     [cmdletbinding()]
@@ -935,81 +717,6 @@ function monitor
         }
     }
 }
-
-function Guess-MostProbableSiteCode
-{
-    [cmdletbinding()]
-
-    param (
-        [string][Parameter(Mandatory=$true)] $CountryCode,
-        [uint16] $MinScore=0,
-        [uint16] $MinMatches=0
-    )
-    
-    $filter="^(DIR.GRPLEG.COM/)?$($CountryCode)-"
-    $MaxHits=0
-    $BGWithMaxHit=""
-    foreach($BG in (Get-CMBoundaryGroup | Where-Object {$_.Name -match "BG-Site"}))
-    {
-        $CountHits=(Get-CMBoundary -BoundaryGroupName $BG.Name | Where-Object {$_.DisplayName -match "$filter"}).count
-        if($CountHits -gt $MaxHits)
-        {
-            $PreviousMaxHit=$MaxHits
-            $MaxHits=$CountHits
-            $BGWithMaxHit=$BG.Name
-        }  
-    }
-    $score=[math]::round(100*$MaxHits/($MaxHits + $PreviousMaxHit),0)
-    if(($MaxHits -ge $MinMatches) -and ($score -ge $MinScore))
-    {
-        return "$BGWithMaxHit"
-    } else {
-        return ""
-    }
-}
-
-function New-IPRBoundary
-{
-    [cmdletbinding()]
-
-    param(
-        [string][Parameter(Mandatory=$true)] $IPRange,
-        [string][Parameter(Mandatory=$false)] $SiteCode,
-        [string][Parameter(Mandatory=$true)] $Country,
-        [string][Parameter(Mandatory=$true)] $SiteName,
-        [string][Parameter(Mandatory=$false)] $LogFile="$env:userprofile\documents\boundaries.log"
-    )
-
-    if(-not($SiteCode))
-    {
-        $BGSite=Guess-MostProbableSiteCode -CountryCode $Country -MinScore 90
-    } else {
-        $BGSite="$SiteCode"
-    }
-    if(-not($BGSite))
-    {
-        write-host "No SiteCode Provided/Detected"
-        break
-    }
-    $BoundaryName="$country-IPR_$($SiteName)"
-    $BGName="BG-Content-$Country-$SiteName"
-    if(-not($CMBoundary=Get-CMBoundary | Where-Object {((($_.BoundaryType -eq 3) -and ($_.Value -eq $IPRange)) -and ($_.DisplayName -eq $BoundaryName))}))
-    {
-        Log -message "creating Boundary $IPRange in $BoundaryName" -Level "INFO" -LogFile $LogFile
-        $CMBoundary=New-CMBoundary -Type IPRange -Value $IPRange -Name $BoundaryName
-    }    
-    if(-not(Get-CMBoundaryGroup -Name $BGName))
-    {
-        Log -message "creating Boundary group $BGName" -Level "INFO" -LogFile $LogFile
-        $null=New-CMBoundaryGroup -Name "$BGName"
-    }
-
-    Log -message "adding $($CMBoundary.DisplayName) $($CMBoundary.Value) to $BGName, $BGSite and BG-SUP-default" -Level "INFO" -LogFile $LogFile
-    Add-CMBoundaryToGroup -BoundaryId ($CMBoundary.BoundaryID) -BoundaryGroupName "$BGName"
-    Add-CMBoundaryToGroup -BoundaryId ($CMBoundary.BoundaryID) -BoundaryGroupName "$BGSite"
-    Add-CMBoundaryToGroup -BoundaryId ($CMBoundary.BoundaryID) -BoundaryGroupName "BG-SUP-Default"
-}
-
 
 function Log
 {
@@ -1059,28 +766,6 @@ function restore-boundaries
     )
     # not tested, need to add some cleaning option ?
     # Import-CSV -Path $filePath | ForEach-Object { New-CMBoundary -Name $_.DisplayName -Type $_.BoundaryType -Value $_.Value }
-}
-
-function find-CMIPRange
-{
-    [cmdletbinding()]
-
-    param (
-        [Parameter(Mandatory=$true)][IPRange] $IPRange
-    )
-    $CMBoundaries=(Get-CMBoundary | where-object {$_.boundarytype -eq 3})
-
-    $Found = [System.Collections.ArrayList]::new()
-
-    foreach($CMBoundary in $CMBoundaries)
-    {
-        switch -regex ($IPRange.Compare([IPRange] ($CMBoundary.value)))
-        {
-            "(NONE|EXTENDING)" {}
-            default {$null=$Found.Add(@{"BoundaryName"=$CMBoundary.DisplayName;"IPRange"=$CMBoundary.Value})}
-        }
-    }
-    return $Found
 }
 
 function import-csv2boundaries
@@ -1200,27 +885,13 @@ class SCCM
     hidden [string] $ProviderMachineName
     SCCM ([string] $PrimarySiteCode, [string] $ProviderMachineName)
     {
-        InitConnection($PrimarySiteCode, $ProviderMachineName)
+        $this.InitConnection($PrimarySiteCode, $ProviderMachineName)
     }
     InitConnection([string] $PrimarySiteCode, [string] $ProviderMachineName)
     {
         $this.PrimarySiteCode = $PrimarySiteCode        
         $this.ProviderMachineName = $ProviderMachineName
-        #
-        # Press 'F5' to run this script. Running this script will load the ConfigurationManager
-        # module for Windows PowerShell and will connect to the site.
-        #
-        # This script was auto-generated at '12/15/2021 10:22:06 AM'.
-
-        # Site configuration
-
-        # Customizations
         $initParams = @{}
-        #$initParams.Add("Verbose", $true) # Uncomment this line to enable verbose logging
-        #$initParams.Add("ErrorAction", "Stop") # Uncomment this line to stop the script on any errors
-
-        # Do not change anything below this line
-
         # Import the ConfigurationManager.psd1 module 
         if($null -eq (Get-Module ConfigurationManager)) {
             Import-Module "$($ENV:SMS_ADMIN_UI_PATH)\..\ConfigurationManager.psd1" @initParams 
@@ -1233,6 +904,296 @@ class SCCM
 
         # Set the current location to be the site code.
         Set-Location "$($PrimarySiteCode):\" @initParams
-
     }
+    deployDistributionPoint([string] $DistributionPoint, [string] $DPSiteCode, [string] $CountryCode, [string] $City, [string] $PXEPass)
+    {
+        # TBD: ajout de la gestion des pull DP
+        # TBD: Ajout de la description du DP (peut etre ajouter un tag d'identification du stage ? "distribution in progress")
+        # TBD: ajout et activation du dedupe
+    
+        if(-not($DistributionPoint -match '^([^\.]+)\.(.+)$'))
+        {
+            throw("invalid format for DistributionPoint : $DistributionPoint")
+        }
+        $DPShortName = $matches[1]
+        $Domain = $matches[2]
+        $DPsAMAccountName = $DPShortName + '$'
+    
+        # prerequisite checks
+        # TBD: check sitecode is good
+    
+        # check machine up
+        if(-not(Test-Connection -quiet -Count 1 -ComputerName $DistributionPoint))
+        {
+            throw("$DistributionPoint is down")
+        }
+
+        AddLocalAdmin("EU\GUS-SCCM-Servers-Admins-$($Domain)")
+        AddLocalAdmin("EU\INFFRPA3017$")
+        AddLocalAdmin(((Get-CMSite -SiteCode $($this.DPSiteCode)).ServerName.Split("."))[0])
+
+        # Client Specific
+        # adding the computer object to the proper AD group
+        $group=""
+        switch($Domain)
+        {
+            "AM.DIR.GRPLEG.COM" {$group="ADM-US-WES-SCCM-AllServers"}
+            "AS.DIR.GRPLEG.COM" {$group="ADM-AS-FRLGS-SCCM-AllServers"}
+            "EU.DIR.GRPLEG.COM" {$group="ADM-FRLGS-SCCM-AllServers"}
+            default {throw("cannot identify domain $Domain")}
+        }
+    
+        if(-not((Get-ADGroupMember -Server $Domain -Identity $group).Name.contains($DPShortName)))
+        {
+            "adding $DPShortName to $group on $Domain"
+            Add-ADGroupMember -server $Domain -Identity $group -Members $DPsAMAccountName
+        }
+    
+        #Install Site System Server
+        if(-not($CMSiteSystemServer=Get-CMSiteSystemServer -AllSite | Where-Object {$_.NALPath -match "$DPShortName"}))
+        {
+            "Creating $DistributionPoint on $($this.PrimarySiteCode)"
+            $CMSiteSystemServer=New-CMSiteSystemServer -ServerName $DistributionPoint -SiteCode $($this.PrimarySiteCode)
+        } else {
+            write-warning "$DistributionPoint is already a site system"
+        }
+    
+        #Optional - Install SCCM IIS Base components
+        Invoke-Command -ComputerName $DistributionPoint -ScriptBlock {dism.exe /online /norestart /enable-feature /ignorecheck /featurename:"IIS-WebServerRole" /featurename:"IIS-WebServer" /featurename:"IIS-CommonHttpFeatures" /featurename:"IIS-StaticContent" /featurename:"IIS-DefaultDocument" /featurename:"IIS-DirectoryBrowsing" /featurename:"IIS-HttpErrors" /featurename:"IIS-HttpRedirect" /featurename:"IIS-WebServerManagementTools" /featurename:"IIS-IIS6ManagementCompatibility"  /featurename:"IIS-Metabase" /featurename:"IIS-WindowsAuthentication"  /featurename:"IIS-WMICompatibility"  /featurename:"IIS-ISAPIExtensions" /featurename:"IIS-ManagementScriptingTools" /featurename:"MSRDC-Infrastructure" /featurename:"IIS-ManagementService"}
+    
+        #Install Distribution Point Role
+        write-host "The Distribution Point Role is being Installed on $DistributionPoint"
+        if(-not($CMDistributionPoint=Get-CMDistributionPoint -SiteSystemServerName $DistributionPoint -SiteCode $($this.PrimarySiteCode)))
+        {
+            "creating DP on $DistributionPoint"
+            $CMDistributionPoint=Add-CMDistributionPoint -CertificateExpirationTimeUtc ((get-date).addyears(5)) -SiteCode $($this.PrimarySiteCode) -SiteSystemServerName $DistributionPoint -MinimumFreeSpaceMB 1024 -ClientConnectionType 'Intranet' -PrimaryContentLibraryLocation Automatic -PrimaryPackageShareLocation Automatic -SecondaryContentLibraryLocation Automatic -SecondaryPackageShareLocation Automatic
+        } else {
+            "DP already created on $DistributionPoint"
+        }
+    
+    
+        #Define PXE Password
+        $PXEpass = convertto-securestring -string "password" -asplaintext -force
+    
+        #Enable PXE, Unknown Computer Support, Client Communication Method
+        Set-CMDistributionPoint -SiteSystemServerName $DistributionPoint -SiteCode $($this.PrimarySiteCode) -EnablePxe $True -PXEpassword $PXEpass -PxeServerResponseDelaySeconds 0 -AllowPxeResponse $True -EnableUnknownComputerSupport $True -UserDeviceAffinity "AllowWithAutomaticApproval" -EnableContentValidation $True -ClientCommunicationType Http -EnableAnonymous $true -EnableBranchCache $true -EnableDoinc $true -DiskSpaceDoinc 50 -AgreeDoincLicense $true
+    
+    
+        #Enable Multicast Feature
+        # Add-CMMulticastServicePoint -SiteSystemServerName $DistributionPoint -SiteCode $($this.PrimarySiteCode)
+    
+    
+    
+        # post install task
+        # add DP to groups (all et OSD)
+        Start-Sleep -Seconds 60
+        "adding $DistributionPoint to content groups"
+        Add-CMDistributionPointToGroup -DistributionPointName $DistributionPoint -DistributionPointGroupName "All On-Premises Distribution Points"
+        Add-CMDistributionPointToGroup -DistributionPointName $DistributionPoint -DistributionPointGroupName "OSD_Win10_PROD_Distribution_Point_Group"
+    
+    
+        # add or create boundary group
+        $BGName="BG-Content-$CountryCode-$city"
+        if(-not($CMBoundaryGroup=Get-CMBoundaryGroup -Name $BGName))
+        {
+            "Creating boundary group $BGName"
+            $CMBoundaryGroup=New-CMBoundaryGroup -AddSiteSystemServer $CMSiteSystemServer -Name $BGName
+        } else {
+            "$BGName already exists"
+        }
+        
+        # check or create boundary / IPRange
+    
+        $IP=[IP] (Invoke-Command -ComputerName $DistributionPoint -ScriptBlock { (Get-NetIPAddress).where({$_.IPAddress -match "10\.\d+\.\d+\.\d+"}).IPAddress })
+        $IP.prefix=(Invoke-Command -ComputerName $DistributionPoint -ScriptBlock { (Get-NetIPAddress).where({$_.IPAddress -match "10\.\d+\.\d+\.\d+"}).PrefixLength })
+    
+    
+        $IPRange="$($IP.startIP)-$($IP.EndIP)"
+    
+        $IPRName="$CountryCode-IPR_$City"
+        if(-not($CMBoundary=Get-CMBoundary -BoundaryName $IPRName))
+        {
+            "creating boundary $IPRName with range $IPRange for $DPShortName / $($this.PrimarySiteCode)"
+            $CMBoundary=New-CMBoundary -Name $IPRName -Type IPRange -Value $IPRange
+        } else {
+            "boundary $IPRName already exist with IPRange : $($CMBoundary.Value)"
+        }
+    
+        # we add the proper BG to that boundary
+        Add-CMBoundaryToGroup -InputObject $CMBoundary -BoundaryGroupInputObject $CMBoundaryGroup
+        Add-CMBoundaryToGroup -InputObject $CMBoundary -BoundaryGroupName "BG-SUP-Default"
+        Add-CMBoundaryToGroup -InputObject $CMBoundary -BoundaryGroupName "BG-Site-$($this.PrimarySiteCode)"
+    }
+    AddLocalAdmin([string] $Computer, [string] $item)
+    {
+        # on test que l'item est non vide
+        if($item.Length -le 0)
+        {
+            throw ("$item is invalid")
+        }
+        
+        # on ajoute l'item a la liste des admins locaux
+        if(-not(Invoke-Command -ComputerName $Computer -ScriptBlock{Get-LocalGroupMember -SID S-1-5-32-544 -Member $args[0] -ErrorAction SilentlyContinue} -ArgumentList $item))
+        {
+            "Adding $item to local admin on $Computer"
+            Invoke-Command -ComputerName $Computer -ScriptBlock {add-LocalGroupMember -SID S-1-5-32-544 -Member $args[0]} -ArgumentList $item 
+        }
+    }
+<#    
+    checkDistribution()
+    {
+        [cmdletbinding()]
+    
+        Param(
+            [string][Parameter(Mandatory=$true)] $DP,
+            [string][Parameter(Mandatory=$false)] $PrimarySiteCode,
+            [string][Parameter(Mandatory=$false)] $ProviderMachineName
+        )
+        $PackagesStatus = (Get-WmiObject -Namespace "Root\SMS\Site_$PrimarySiteCode" -Query "select * from SMS_PackageStatusDistPointsSummarizer where ServerNALPath like '%$DP%'" -ComputerName $ProviderMachineName | Group-Object -Property state)
+        "in progress : $((($PackagesStatus.where{$_.Name -eq 7})[0]).count)"
+        "retrying    : $((($PackagesStatus.where{$_.Name -eq 2})[0]).count)"
+        "failed      : $((($PackagesStatus.where{$_.Name -eq 3})[0]).count)"
+        "success     : $((($PackagesStatus.where{$_.Name -eq 0})[0]).count)"
+    }
+    RetryFailedPackages()
+    {
+        [cmdletbinding()]
+    
+        Param(
+            [string][Parameter(Mandatory=$true)] $DP,
+            [string][Parameter(Mandatory=$false)] $PrimarySiteCode,
+            [string][Parameter(Mandatory=$false)] $ProviderMachineName
+        )
+        $PSDrive=Get-PSDrive -PSProvider CMSite -ErrorAction SilentlyContinue
+        if(-not($PrimarySiteCode) -and -not($ProviderMachineName) -and -not($PSDrive))
+        {
+            throw("no PSDrive detected or set")
+        } 
+        elseif(-not($PrimarySiteCode) -or -not($ProviderMachineName))
+        {
+            $PrimarySiteCode=$PSDrive.Name
+            $ProviderMachineName=$PSRdrive.root
+        } 
+        else 
+        {
+            connect-SCCM -ProviderMachineName $ProviderMachineName -PrimarySiteCode $PrimarySiteCode
+        }
+    
+        $FailedPackages = Get-WmiObject -Namespace "Root\SMS\Site_$PrimarySiteCode" -Query "select * from SMS_PackageStatusDistPointsSummarizer where state = 3" -ComputerName $ProviderMachineName
+    
+        if ($FailedPackages)
+        {
+            foreach ($FailedPackage in $FailedPackages | where-object {$_.ServerNALPath -match "$DP"})
+            {
+                try
+                {
+                    $DistributionPointObj = Get-WmiObject -Namespace "root\SMS\Site_$($($this.PrimarySiteCode))" -Class SMS_DistributionPoint -Filter "PackageID='$($FailedPackage.PackageID)' and ServerNALPath like '%$($FailedPackage.ServerNALPath.Substring(12,7))%'" -ComputerName INFFRPA3017
+                    $DistributionPointObj.RefreshNow = $True
+                    $null = $DistributionPointObj.Put()
+                    Write-Host "Refreshed $($FailedPackage.PackageID) on $($FailedPackage.ServerNALPath) - State was: $($FailedPackage.State)"
+                }
+                catch
+                {
+                    Write-Host "Unable to refresh package $($FailedPackage.PackageID) on $($FailedPackage.ServerNALPath.Substring(12,7)) - State was: $($FailedPackage.State)"
+                    write-host $Error
+                }
+            }
+        }
+    }
+    
+    GuessMostProbableSiteCode()
+    {
+        [cmdletbinding()]
+    
+        param (
+            [string][Parameter(Mandatory=$true)] $CountryCode,
+            [uint16] $MinScore=0,
+            [uint16] $MinMatches=0
+        )
+        
+        $filter="^(DIR.GRPLEG.COM/)?$($CountryCode)-"
+        $MaxHits=0
+        $BGWithMaxHit=""
+        foreach($BG in (Get-CMBoundaryGroup | Where-Object {$_.Name -match "BG-Site"}))
+        {
+            $CountHits=(Get-CMBoundary -BoundaryGroupName $BG.Name | Where-Object {$_.DisplayName -match "$filter"}).count
+            if($CountHits -gt $MaxHits)
+            {
+                $PreviousMaxHit=$MaxHits
+                $MaxHits=$CountHits
+                $BGWithMaxHit=$BG.Name
+            }  
+        }
+        $score=[math]::round(100*$MaxHits/($MaxHits + $PreviousMaxHit),0)
+        if(($MaxHits -ge $MinMatches) -and ($score -ge $MinScore))
+        {
+            return "$BGWithMaxHit"
+        } else {
+            return ""
+        }
+    }
+    
+    NewIPRBoundary()
+    {
+        [cmdletbinding()]
+    
+        param(
+            [string][Parameter(Mandatory=$true)] $IPRange,
+            [string][Parameter(Mandatory=$false)] $SiteCode,
+            [string][Parameter(Mandatory=$true)] $Country,
+            [string][Parameter(Mandatory=$true)] $SiteName,
+            [string][Parameter(Mandatory=$false)] $LogFile="$env:userprofile\documents\boundaries.log"
+        )
+    
+        if(-not($SiteCode))
+        {
+            $BGSite=Guess-MostProbableSiteCode -CountryCode $Country -MinScore 90
+        } else {
+            $BGSite="$SiteCode"
+        }
+        if(-not($BGSite))
+        {
+            write-host "No SiteCode Provided/Detected"
+            break
+        }
+        $BoundaryName="$country-IPR_$($SiteName)"
+        $BGName="BG-Content-$Country-$SiteName"
+        if(-not($CMBoundary=Get-CMBoundary | Where-Object {((($_.BoundaryType -eq 3) -and ($_.Value -eq $IPRange)) -and ($_.DisplayName -eq $BoundaryName))}))
+        {
+            Log -message "creating Boundary $IPRange in $BoundaryName" -Level "INFO" -LogFile $LogFile
+            $CMBoundary=New-CMBoundary -Type IPRange -Value $IPRange -Name $BoundaryName
+        }    
+        if(-not(Get-CMBoundaryGroup -Name $BGName))
+        {
+            Log -message "creating Boundary group $BGName" -Level "INFO" -LogFile $LogFile
+            $null=New-CMBoundaryGroup -Name "$BGName"
+        }
+    
+        Log -message "adding $($CMBoundary.DisplayName) $($CMBoundary.Value) to $BGName, $BGSite and BG-SUP-default" -Level "INFO" -LogFile $LogFile
+        Add-CMBoundaryToGroup -BoundaryId ($CMBoundary.BoundaryID) -BoundaryGroupName "$BGName"
+        Add-CMBoundaryToGroup -BoundaryId ($CMBoundary.BoundaryID) -BoundaryGroupName "$BGSite"
+        Add-CMBoundaryToGroup -BoundaryId ($CMBoundary.BoundaryID) -BoundaryGroupName "BG-SUP-Default"
+    }
+    findCMIPRange()
+    {
+        [cmdletbinding()]
+    
+        param (
+            [Parameter(Mandatory=$true)][IPRange] $IPRange
+        )
+        $CMBoundaries=(Get-CMBoundary | where-object {$_.boundarytype -eq 3})
+    
+        $Found = [System.Collections.ArrayList]::new()
+    
+        foreach($CMBoundary in $CMBoundaries)
+        {
+            switch -regex ($IPRange.Compare([IPRange] ($CMBoundary.value)))
+            {
+                "(NONE|EXTENDING)" {}
+                default {$null=$Found.Add(@{"BoundaryName"=$CMBoundary.DisplayName;"IPRange"=$CMBoundary.Value})}
+            }
+        }
+        return $Found
+    }
+#>    
 }
