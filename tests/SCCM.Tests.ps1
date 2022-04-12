@@ -1,6 +1,6 @@
 Describe 'Check class SCCM is working as expected' {
     BeforeAll {
-        Import-Module -Force $PSScriptRoot\..\..\SCCM_Library.ps1
+        Import-Module -Force .\SCCM_Library.ps1
     }
     BeforeEach {
     }

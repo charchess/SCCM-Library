@@ -2,12 +2,14 @@ name: Test PowerShell on Ubuntu
 on: push
 
 jobs:
-  IPAddress-testing:
-    name: unit tests validation
-    runs-on: ubuntu-latest
-    steps:
-      - name: Perform a validation of class IPAddress file
-        shell: pwsh
+  test-pwsh:
+      runs-on: ubuntu-latest
+      steps:
+      - uses: actions/checkout@v2
+      - name: Run Pester tests
         run: |
-          Get-Childitem -Hidden -recurse
-
+          Set-PSRepository psgallery -InstallationPolicy trusted
+          Install-Module -Name Pester -RequiredVersion 5.0.4 -Confirm:$false -Force
+          $pester=Invoke-Pester -Path "tests" -Passthru
+          if ($pester.Result -eq 'Failed') {exit 1}
+        shell: pwsh

@@ -1,6 +1,6 @@
 Describe 'Check class IP is working as expected' {
     BeforeAll {
-        Import-Module -Force $PSScriptRoot\..\..\SCCM_Library.ps1
+        Import-Module -Force .\SCCM_Library.ps1
     }
     BeforeEach {
         $IP1=[IP] "127.0.0.1/8"
