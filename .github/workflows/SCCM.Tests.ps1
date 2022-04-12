@@ -7,6 +7,6 @@ Describe 'Check class SCCM is working as expected' {
     It 'SCCM instance creation - Site/Server' {
         Mock Set-Location { return $true }
         Mock New-PSDrive {return $true}
-        ([SCCM]::new("X01", "server.fqdn")) | Should -Be "10.0.0.1"
+        ([SCCM]::new("X01", "server.fqdn")) | Should -Be "SCCM"
     }
 }
